@@ -1,0 +1,5 @@
+meson.db*
+archivos/
+respaldos/
+node_modules/
+pruebas-navegador/*/
