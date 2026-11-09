@@ -5,4 +5,4 @@
 | Clave | Fecha | Decisión | Motivo | Documento afectado |
 |---|---|---|---|---|
 | D-01 | | | | |
-| D-__ | | Herramienta del agente: [Claude Code / Codex / Antigravity CLI / Lovable] | | AGENTS.md |
+| D-07 | | Herramienta del agente: Claude Code | | AGENTS.md, CLAUDE.md |
