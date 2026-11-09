@@ -3,3 +3,5 @@ archivos/
 respaldos/
 node_modules/
 pruebas-navegador/*/
+.env
+.env.*
