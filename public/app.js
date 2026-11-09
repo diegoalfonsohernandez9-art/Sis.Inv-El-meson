@@ -399,7 +399,7 @@ Object.assign(rutas, {
   cocinaInicio() {
     const tarea = (href, icono, nombre, detalle) => `<a class="tarea" href="${href}"><span class="burbuja">${ic(icono)}</span><div><b>${nombre}</b><small>${detalle}</small></div>${ic('chev')}</a>`;
     return hero(`Hola, ${esc(S.me.nombre.split(' ')[0])}`, '¿Qué necesitas hacer en este turno?', `<div class="rol">${esc(S.me.area)}</div>`) + `<main class="contenido">
-      <div class="pila">
+      <div class="pila tareas">
         ${tarea('#/conteo', 'lista', 'Registrar conteo', 'Actualiza las existencias del día')}
         ${tarea('#/pedidos', 'hoja', 'Pedir insumos', `${porSugerir().length} por solicitar`)}
         ${tarea('#/recibir', 'camion', 'Recibir pedido', `${abiertos().length} por recibir`)}
@@ -490,7 +490,7 @@ function contacto(p) {
 const INTERFACES = {
   admin: {
     clase: 'ui-admin', nombre: 'Panel administrativo',
-    nav: [['inicio', 'Resumen', 'casa'], ['inventario', 'Inventario', 'caja'], ['pedidos', 'Pedidos', 'lista'], ['pendientes', 'Pendientes', 'reloj', 1], ['proveedores', 'Proveedores', 'camion', 1], ['recetas', 'Recetas', 'hoja'], ['reportes', 'Reportes', 'barras', 1], ['perfil', 'Más', 'persona']],
+    nav: [['inicio', 'Resumen', 'casa'], ['inventario', 'Inventario', 'caja'], ['pedidos', 'Pedidos', 'lista'], ['pendientes', 'Pendientes', 'reloj', 1], ['proveedores', 'Proveedores', 'camion', 1], ['recetas', 'Recetas', 'hoja'], ['reportes', 'Reportes', 'barras', 1], ['perfil', '<span class="solo-movil">Más</span><span class="solo-grande">Perfil</span>', 'persona']],
     seccion: { actividad: 'inicio', insumos: 'inventario', insumo: 'inventario', rendimientos: 'inventario', conteo: 'inventario', solicitud: 'pedidos', pedido: 'pedidos', 'nuevo-pedido': 'pedidos', recepcion: 'pedidos', expediente: 'pedidos', remision: 'pedidos', proveedor: 'proveedores', receta: 'recetas', 'receta-editar': 'recetas' },
     rutas: ['inicio', 'actividad', 'inventario', 'insumos', 'insumo', 'rendimientos', 'conteo', 'pedidos', 'pendientes', 'solicitud', 'pedido', 'nuevo-pedido', 'recibir', 'recepcion', 'expediente', 'remision', 'proveedores', 'proveedor', 'recetas', 'receta', 'receta-editar', 'reportes', 'perfil'],
     vista: { 'nuevo-pedido': 'nuevoPedido', 'receta-editar': 'recetaEditar' },
@@ -535,7 +535,7 @@ function render() {
   const r = ui.rutas.includes(nombre) ? nombre : ui.rutas[0];
   const seccion = ui.seccion[r] || r;
   const scroll = window.scrollY;
-  document.body.className = ui.clase;
+  document.body.className = `app ${ui.clase}`;
   app.innerHTML = `<header class="cabecera"><a href="#/${ui.rutas[0]}" aria-label="Inicio"><img src="/img/logo.png" alt="El Mesón"></a>
     <span class="interfaz">${ui.nombre}</span>${campana()}</header>
     ${rutas[ui.vista[r] || r](...args)}

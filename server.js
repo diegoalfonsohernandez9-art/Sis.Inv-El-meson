@@ -443,7 +443,8 @@ function crearApp(rutaDb) {
     if (ruta.startsWith('/api/')) return api(req, res, ruta);
     const abs = archivos.get(ruta === '/' ? '/index.html' : ruta);
     if (!abs || req.method !== 'GET') { res.writeHead(404); return res.end('No encontrado'); }
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(abs)] || 'application/octet-stream' });
+    // Fotos y fuentes casi no cambian; sin caché parpadean en cada cambio de pantalla.
+    res.writeHead(200, { 'Content-Type': MIME[path.extname(abs)] || 'application/octet-stream', 'Cache-Control': /^\/(img|fonts)\//.test(ruta) ? 'public, max-age=86400' : 'no-cache' });
     fs.createReadStream(abs).pipe(res);
   });
 }

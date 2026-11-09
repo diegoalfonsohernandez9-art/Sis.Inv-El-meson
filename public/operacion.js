@@ -710,6 +710,15 @@ document.addEventListener('input', e => {
   $('.cmp-mot', t).hidden = d.c.rej <= 0;
 });
 
+// Enter pasa a la siguiente cantidad: captura rápida con el teclado numérico.
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || !e.target.matches('#app input[type=number]')) return;
+  e.preventDefault();
+  const todos = [...document.querySelectorAll('#app input[type=number]')].filter(i => i.offsetParent);
+  const siguiente = todos[todos.indexOf(e.target) + 1];
+  if (siguiente) { siguiente.focus(); siguiente.select(); }
+});
+
 function pantallaSinRed() {
   document.body.className = '';
   app.innerHTML = `<header class="cabecera"><img src="/img/logo.png" alt="El Mesón"></header><main class="contenido sin-hero"><section class="tarjeta">

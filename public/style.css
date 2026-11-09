@@ -165,26 +165,26 @@ dialog h2 { font-size: 20px; margin-bottom: 12px; }
 .ui-proveedor .cabecera::after { display: none; }
 
 /* Administración: en pantalla grande, barra lateral y dos columnas */
-@media (min-width: 900px) {
-  .ui-admin { background: var(--crema); }
-  .ui-admin #app { max-width: none; margin: 0 0 0 216px; padding-bottom: 32px; box-shadow: none; }
-  .ui-admin .nav { left: 0; top: 0; bottom: 0; width: 216px; max-width: none; transform: none; display: flex; flex-direction: column; gap: 4px; padding: 76px 12px 16px; background: #2a1a10; box-shadow: none; z-index: 1; }
-  .ui-admin .nav a { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 10px; font-size: 14px; color: #e9dccf; text-align: left; }
-  .ui-admin .nav a svg.i { margin: 0; }
-  .ui-admin .nav a.on { background: var(--naranja); color: #fff; }
-  .ui-admin .cabecera { position: relative; z-index: 2; }
-  .ui-admin .cabecera > a:first-child { position: fixed; top: 0; left: 0; width: 216px; height: 60px; padding: 12px 14px; background: #fff; }
-  .ui-admin .interfaz { font-size: 13px; }
-  .ui-admin .hero { padding-left: 28px; padding-right: 28px; }
-  .ui-admin .hero { background: linear-gradient(90deg, #1f0f06 calc(100% - 300px), rgba(31, 15, 6, 0) calc(100% - 120px)), url(/img/hero.png) right center / auto 100% no-repeat #1f0f06; }
-  .ui-admin .hero.corto { background: #2a1a10; }
-  .ui-admin .hero.corto + .contenido > .tarjeta:first-child, .ui-admin .contenido > .tarjeta:only-of-type { grid-column: 1 / -1; }
-  .ui-admin .contenido { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0 28px; max-width: 1240px; align-items: start; }
-  .ui-admin .contenido > .stats, .ui-admin .contenido > .cats, .ui-admin .contenido > .btn, .ui-admin .contenido > .pestanas,
-  .ui-admin .contenido > .botones, .ui-admin .contenido > .pila, .ui-admin .contenido > .buscar { grid-column: 1 / -1; }
-  .ui-admin .stats, .ui-admin .stats.c3, .ui-admin .stats.c4 { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
-  .ui-admin .cats { grid-template-columns: repeat(4, 1fr); }
-  .ui-admin .contenido > .botones, .ui-admin .contenido > .pila { max-width: 560px; }
+@media screen and (min-width: 900px) {
+  .app { background: var(--crema); }
+  .app #app { max-width: none; margin: 0 0 0 216px; padding-bottom: 32px; box-shadow: none; }
+  .app .nav { left: 0; top: 0; bottom: 0; width: 216px; max-width: none; transform: none; display: flex; flex-direction: column; gap: 4px; padding: 76px 12px 16px; background: #2a1a10; box-shadow: none; z-index: 1; }
+  .app .nav a { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 10px; font-size: 14px; color: #e9dccf; text-align: left; }
+  .app .nav a svg.i { margin: 0; }
+  .app .nav a.on { background: var(--naranja); color: #fff; }
+  .app .cabecera { position: relative; z-index: 2; }
+  .app .cabecera > a:first-child { position: fixed; top: 0; left: 0; width: 216px; height: 60px; padding: 12px 14px; background: #fff; }
+  .app .interfaz { font-size: 13px; }
+  .app .hero { padding-left: 28px; padding-right: 28px; }
+  .app .hero { background: linear-gradient(90deg, #1f0f06 calc(100% - 300px), rgba(31, 15, 6, 0) calc(100% - 120px)), url(/img/hero.png) right center / auto 100% no-repeat #1f0f06; }
+  .app .hero.corto { background: #2a1a10; }
+  .app .hero.corto + .contenido > .tarjeta:first-child, .app .contenido > .tarjeta:only-of-type { grid-column: 1 / -1; }
+  .app .contenido { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0 28px; max-width: 1240px; align-items: start; }
+  .app .contenido > .stats, .app .contenido > .cats, .app .contenido > .btn, .app .contenido > .pestanas,
+  .app .contenido > .botones, .app .contenido > .pila, .app .contenido > .buscar { grid-column: 1 / -1; }
+  .app .stats, .app .stats.c3, .app .stats.c4 { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+  .app .cats { grid-template-columns: repeat(4, 1fr); }
+  .app .contenido > .botones, .app .contenido > .pila { max-width: 560px; }
   #aviso { bottom: 28px; }
 }
 
@@ -282,10 +282,10 @@ details summary { cursor: pointer; font-weight: 600; color: var(--naranja); min-
 .fila-ed select, .fila-ed input { display: block; width: 100%; min-height: 42px; margin-top: 3px; border: 1px solid #e3d9cf; border-radius: 8px; padding: 0 8px; background: #fff; font-size: 16px; }
 .quitar { min-height: 42px; color: var(--gris); }
 
-@media (min-width: 900px) {
-  .ui-admin .solo-escritorio { display: flex; }
-  .ui-admin .nav a { flex: none; min-height: 44px; }
-  .ui-admin .contenido > .papel, .ui-admin .contenido > .pasos { grid-column: 1 / -1; }
+@media screen and (min-width: 900px) {
+  .app .solo-escritorio { display: flex; }
+  .app .nav a { flex: none; min-height: 44px; }
+  .app .contenido > .papel, .app .contenido > .pasos { grid-column: 1 / -1; }
   .firmas { grid-template-columns: 1fr 1fr; }
 }
 @media (min-width: 600px) { .firmas { grid-template-columns: 1fr 1fr; } }
@@ -299,3 +299,71 @@ details summary { cursor: pointer; font-weight: 600; color: var(--naranja); min-
 
 #sin-red { position: sticky; top: 0; z-index: 30; background: var(--rojo); color: #fff; padding: 8px 16px; font-size: 13px; font-weight: 600; text-align: center; }
 .nums small { font-size: 11px; }
+
+.solo-grande { display: none; }
+.lista-doble { display: block; }
+
+/* Mouse: respuesta visible en lo que se puede pulsar */
+@media (hover: hover) {
+  a.fila, a.stat, a.cat, a.tarea, a.pestana, button.pestana { transition: background-color .12s, box-shadow .12s; }
+  a.fila:hover { background: var(--crema); box-shadow: -14px 0 0 var(--crema), 14px 0 0 var(--crema); }
+  a.stat:hover, a.cat:hover, a.tarea:hover, a.pestana:not(.on):hover, button.pestana:not(.on):hover { box-shadow: 0 4px 16px rgba(80, 45, 20, .2); }
+  .btn:not(:disabled):hover { filter: brightness(.93); }
+  .btn.borde:not(:disabled):hover { background: var(--naranja-suave); filter: none; }
+  .ver:hover, .enlace:hover { text-decoration: underline; }
+  .seg-op input:not(:checked):hover + span { background: #fff; color: var(--tinta); }
+  tbody tr:hover td { background: var(--crema); }
+}
+
+/* Tableta: aprovecha más ancho sin barra lateral */
+@media (min-width: 600px) and (max-width: 899px) {
+  #app, .nav, .ui-proveedor #app, .ui-proveedor .nav { max-width: 720px; }
+}
+
+@media screen and (min-width: 900px) {
+  .ui-proveedor #app, .ui-proveedor .nav { max-width: none; }
+  .ui-proveedor .nav { width: 216px; }
+  .ui-proveedor .nav a { color: #e9dccf; }
+  .ui-proveedor .nav a.on { color: #fff; }
+  .solo-movil { display: none; }
+  .solo-grande { display: inline; }
+  .app .hero { min-height: 170px; padding-top: 26px; }
+  .app .banda { padding: 22px 28px 54px; }
+  .app .contenido { max-width: 1500px; }
+
+  /* Las acciones no necesitan todo el ancho */
+  .app .contenido > .btn { justify-self: start; width: auto; min-width: 280px; padding-inline: 24px; }
+  .app .tarjeta > .btn { width: auto; min-width: 280px; padding-inline: 24px; display: inline-flex; }
+  .app .contenido > .botones { justify-self: start; width: 100%; }
+
+  /* El encabezado de cada expediente ocupa todo el ancho */
+  .app .sin-hero > .tarjeta:first-of-type { grid-column: 1 / -1; }
+  .app .datos { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+  .app .estados { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+
+  /* Cocina: tareas en una fila */
+  .app .contenido > .tareas { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); max-width: none; }
+
+  /* Edición en un solo renglón */
+  .fila-ed { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) 40px; }
+  .fila-ed label:first-child { grid-column: auto; }
+
+  /* Formularios de una sola tarjeta: renglones cómodos */
+  .app .contenido > .tarjeta:only-of-type .campo { max-width: 640px; }
+
+  #aviso { left: calc(50% + 108px); }
+  dialog { width: min(520px, calc(100vw - 32px)); }
+}
+
+/* Pantallas muy anchas: tres columnas */
+@media screen and (min-width: 1700px) {
+  .app .contenido { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .app .cats { grid-template-columns: repeat(4, 1fr); }
+}
+
+@media screen and (min-width: 900px) {
+  /* Foto de ancho fijo: el degradado siempre la cubre y no deja corte visible */
+  .app .hero:not(.corto) { background: linear-gradient(90deg, #1f0f06 calc(100% - 340px), rgba(31, 15, 6, 0) calc(100% - 120px)), url(/img/hero.png) right center / 340px 100% no-repeat #1f0f06; }
+  .app .tarjeta > .btn { margin-top: 8px; }
+  .app .sin-hero > .tarjeta:first-of-type .campo { max-width: 640px; }
+}

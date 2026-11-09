@@ -142,7 +142,7 @@ let fallas = 0;
   await cdp('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
   await clicTexto('Intentar de nuevo');
   await dormir(500);
-  check('reintentar recupera la app', await ev(`document.body.className==='ui-admin'`));
+  check('reintentar recupera la app', await ev(`document.body.classList.contains('ui-admin')`));
 
   console.log('Excepciones JS:', errores.length ? errores : 'ninguna');
   console.log(`Fallas: ${fallas}`);

@@ -122,7 +122,7 @@ let fallas = 0;
 
   // 2. Auxiliar: 20 pedidos, 10 llegan
   await entrar('auxiliar', 'Carlos Méndez');
-  check('auxiliar entra a su interfaz', await ev(`document.body.className==='ui-auxiliar'`));
+  check('auxiliar entra a su interfaz', await ev(`document.body.classList.contains('ui-auxiliar')`));
   await foto('10-auxiliar-hoy'); await sinDesborde('auxiliar hoy');
   await ir(`#/recepcion/${ped.id}`);
   await foto('11-recepcion-inicio'); await sinDesborde('recepción');
