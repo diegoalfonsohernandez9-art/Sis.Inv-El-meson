@@ -63,11 +63,11 @@ function mensajeLinea(c, esperada, u) {
 function datosRecepcion(p) {
   const k = `rcp.${p.id}.`;
   return p.lineas.filter(l => pendienteDe(l) > 0).map(l => {
-    const i = insumoPor(l.insumo_id), esperada = pendienteDe(l);
-    const recibido = val(`${k}${i.id}.rec`, esperada);
+    const i = insumoPor(l.insumo_id), esperada = pendienteDe(l), f = l.factor || 1;
+    const recibido = val(`${k}${i.id}.rec`, +(esperada / f).toFixed(3));
     const decision = val(`${k}${i.id}.dec`, 'aceptar');
     const parcial = val(`${k}${i.id}.par`, '');
-    return { i, l, esperada, recibido, decision, parcial, motivo: val(`${k}${i.id}.mot`, ''), nota: val(`${k}${i.id}.nota`, ''), dano: val(`${k}${i.id}.dano`, false), c: calcLinea(esperada, recibido, decision, parcial) };
+    return { i, l, esperada, recibido, decision, parcial, motivo: val(`${k}${i.id}.mot`, ''), nota: val(`${k}${i.id}.nota`, ''), dano: val(`${k}${i.id}.dano`, false), c: calcLinea(esperada, (Number(recibido) || 0) * f, decision, (Number(parcial) || 0) * f) };
   });
 }
 
@@ -147,7 +147,7 @@ Object.assign(rutas, {
       <label class="campo">Proveedor *<select id="np-prov" required><option value="">Elegir…</option>${S.proveedores.map(p => `<option value="${p.id}">${esc(p.nombre)}</option>`).join('')}</select></label>
       <label class="campo">Fecha de entrega *<input id="np-fecha" type="date" value="${new Date(Date.now() + 864e5).toISOString().slice(0, 10)}"></label>
       <label class="campo">Asignar a <select id="np-aux"><option value="">Sin asignar</option>${S.auxiliares.map(a => `<option value="${a.id}">${esc(a.nombre)}</option>`).join('')}</select></label>
-      ${editorFilas('np', [{ n: 'insumo', t: 'Insumo', opciones: activos().map(i => [i.id, `${i.nombre} (${i.unidad})`]) }, { n: 'cantidad', t: 'Cantidad', num: 1 }, { n: 'precio', t: 'Precio unitario', num: 1 }])}
+      ${editorFilas('np', [{ n: 'insumo', t: 'Insumo y presentación', opciones: activos().flatMap(i => [[i.id, `${i.nombre} (${i.unidad})`], ...presDe(i.id).map(p => [`${i.id}:${p.id}`, `${i.nombre} · ${p.nombre} de ${+p.contenido} ${i.unidad}`])]) }, { n: 'cantidad', t: 'Cantidad', num: 1 }, { n: 'precio', t: 'Precio por kg, L o unidad', num: 1 }])}
       <button class="btn" data-act="crearPedido">${ic('ok')} Crear pedido</button></section></main>`;
   },
 
@@ -164,13 +164,13 @@ Object.assign(rutas, {
         <label class="campo">Folio de la nota o remisión del proveedor *<input data-draft="${k}folio" maxlength="40" autocomplete="off" value="${esc(val(`${k}folio`, ''))}"></label>
         <label class="check"><input type="checkbox" data-draft="${k}desinf" ${val(`${k}desinf`, false) ? 'checked' : ''}> Desinfección realizada</label></section>
       ${datosRecepcion(p).map(d => {
-        const u = d.i.unidad, pre = `${k}${d.i.id}.`;
+        const u = d.i.unidad, pre = `${k}${d.i.id}.`, en = d.l.factor ? `${esc(d.l.presentacion)} de ${+d.l.factor} ${esc(u)}` : esc(u);
         const opt = (v, t) => `<label class="seg-op"><input type="radio" name="${pre}dec" value="${v}" data-draft="${pre}dec" data-live="rcp" ${d.decision === v ? 'checked' : ''}><span>${t}</span></label>`;
         return `<section class="tarjeta linea-rec" data-pedido="${p.id}" data-insumo="${d.i.id}">
-          <div class="insumo-c">${foto(d.i)}<div><b>${esc(d.i.nombre)}</b><br><small>Se esperan ${cant(d.esperada, u)}${d.l.aceptado ? ` · ya entraron ${cant(d.l.aceptado, u)}` : ''}</small></div></div>
-          <label class="campo">¿Cuánto llegó? (${esc(u)})<input class="grande" type="number" min="0" step="any" inputmode="decimal" data-draft="${pre}rec" data-live="rcp" value="${esc(d.recibido)}"></label>
+          <div class="insumo-c">${foto(d.i)}<div><b>${esc(d.i.nombre)}</b><br><small>Se esperan ${cant(d.esperada, u)}${d.l.factor ? ` (${+(d.esperada / d.l.factor).toFixed(2)} × ${esc(d.l.presentacion)})` : ''}${d.l.aceptado ? ` · ya entraron ${cant(d.l.aceptado, u)}` : ''}</small></div></div>
+          <label class="campo">¿Cuánto llegó? (${en})<input class="grande" type="number" min="0" step="any" inputmode="decimal" data-draft="${pre}rec" data-live="rcp" value="${esc(d.recibido)}"></label>
           <div class="seg" role="radiogroup" aria-label="Decisión sobre ${esc(d.i.nombre)}">${opt('aceptar', 'Aceptar')}${opt('parcial', 'Parcial')}${opt('rechazar', 'Rechazar')}</div>
-          <label class="campo cmp-par" ${d.decision === 'parcial' ? '' : 'hidden'}>¿Cuánto aceptas? (${esc(u)})<input class="grande" type="number" min="0" step="any" inputmode="decimal" data-draft="${pre}par" data-live="rcp" value="${esc(d.parcial)}"></label>
+          <label class="campo cmp-par" ${d.decision === 'parcial' ? '' : 'hidden'}>¿Cuánto aceptas? (${en})<input class="grande" type="number" min="0" step="any" inputmode="decimal" data-draft="${pre}par" data-live="rcp" value="${esc(d.parcial)}"></label>
           <p class="msg-linea" role="status">${mensajeLinea(d.c, d.esperada, u)}</p>
           <div class="cmp-mot" ${d.c.rej > 0 ? '' : 'hidden'}>
             <label class="campo">Motivo del rechazo *<input maxlength="300" data-draft="${pre}mot" value="${esc(d.motivo)}"></label>
@@ -213,10 +213,16 @@ Object.assign(rutas, {
         </ul>
         ${!rem ? `<button class="btn" data-act="generarRemision" data-id="${r.id}">${ic('hoja')} Generar remisión</button>` : `<a class="btn" href="#/remision/${rem.id}">${ic('hoja')} ${rem.estado === 'borrador' ? 'Revisar y emitir remisión' : rem.firma_estado !== 'firmada' ? 'Solicitar firmas' : 'Enviar remisión'}</a>`}
       </section>
-      <section class="tarjeta">${titulo('Productos')}
-        ${r.lineas.map(l => `<div class="prod"><b>${esc(l.insumo)}</b> <small>(${esc(l.unidad)})</small>
-          ${nums([['Pedida', +l.pedida], ['Recibida', +l.recibido], ['Aceptada', +l.aceptado, 'verde-t'], ['Rechazada', +l.rechazado, l.rechazado ? 'rojo-t' : ''], ['Pendiente', +l.pendiente, l.pendiente ? 'rojo-t' : '']])}
-          ${l.motivo ? `<p class="mini-nota">Motivo de rechazo: ${esc(l.motivo)}</p>` : ''}${l.nota ? `<p class="mini-nota">Nota: ${esc(l.nota)}</p>` : ''}</div>`).join('')}
+      <section class="tarjeta"><div class="titulo"><h2>Productos</h2>${esAdmin() ? `<button class="ver" data-act="corregirRecepcion" data-id="${r.id}">${ic('lapiz')} Corregir cantidades</button>` : ''}</div>
+        ${r.lineas.map(l => {
+          const pend = Math.max(0, +(l.pendiente - l.ajuste).toFixed(3));
+          return `<div class="prod"><b>${esc(l.insumo)}</b> <small>(${esc(l.unidad)})</small>
+          ${nums([['Pedida', +l.pedida], ['Recibida', +(l.recibido + l.ajuste).toFixed(3)], ['Aceptada', +(l.aceptado + l.ajuste).toFixed(3), 'verde-t'], ['Rechazada', +l.rechazado, l.rechazado ? 'rojo-t' : ''], ['Pendiente', pend, pend ? 'rojo-t' : '']])}
+          ${l.ajuste ? `<p class="mini-nota">Corregida. Se capturaron ${+l.aceptado} ${esc(l.unidad)} aceptados.</p>` : ''}
+          ${l.motivo ? `<p class="mini-nota">Motivo de rechazo: ${esc(l.motivo)}</p>` : ''}${l.nota ? `<p class="mini-nota">Nota: ${esc(l.nota)}</p>` : ''}</div>`;
+        }).join('')}
+        ${r.correcciones.length ? `<h3>Correcciones</h3>${r.correcciones.map(c => `<div class="fila"><span class="burbuja">${ic('lapiz')}</span><div class="txt"><b>${c.lineas.map(l => `${esc(l.insumo)}: ${+l.antes} → ${+l.nuevo} ${esc(l.unidad)}`).join('; ')}</b>
+          <small>${esc(c.motivo)} · ${esc(c.usuario)} · ${cuando(c.creado)}</small></div></div>`).join('')}` : ''}
         ${r.notas ? `<p class="mini-nota">Notas de la entrega: ${esc(r.notas)}</p>` : ''}</section>
       <section class="tarjeta"><div class="titulo"><h2>Incidencias</h2></div>
         ${incs.map(i => `<div class="fila"><span class="burbuja ${i.tipo === 'observacion' ? '' : 'rojo'}">${ic('alerta')}</span><div class="txt"><b>${TIPO_INC[i.tipo]}: ${esc(i.insumo)}${i.cantidad ? ` ${+i.cantidad} ${esc(i.unidad)}` : ''}</b>
@@ -334,10 +340,14 @@ Object.assign(rutas, {
     const usan = S.recetas.filter(r => r.lineas.some(l => l.insumo_id === i.id));
     const movs = S.movimientos.filter(m => m.insumo_id === i.id);
     return `<main class="contenido sin-hero"><section class="tarjeta"><div class="encabezado"><a href="#/insumos" aria-label="Volver" class="volver">${ic('atras')}</a><h2>${esc(i.nombre)}</h2>${chip(estadoDe(i.stock, i.min))}</div>
-        ${nums([['Existencia', cant(i.stock, i.unidad)], ['Rendimiento', i.rendimiento === null ? 'Sin dato' : `${+i.rendimiento} %`], ['Aprovechable', i.aprovechable === null ? 'Sin dato' : cant(i.aprovechable, i.unidad)]])}
+        ${nums([['Existencia', cant(i.stock, i.unidad) + equivalente(i)], ['Rendimiento', i.rendimiento === null ? 'Sin dato' : `${+i.rendimiento} %`], ['Aprovechable', i.aprovechable === null ? 'Sin dato' : cant(i.aprovechable, i.unidad)]])}
         ${i.rendimiento === null ? '<p class="sub">Captura el rendimiento para calcular cuánto se aprovecha.</p>' : ''}
         <dl class="datos"><div><dt>Precio</dt><dd>${i.costo === null ? '<span class="sin">Sin capturar</span>' : `${dinero(i.costo)} por ${esc(i.unidad)}`}</dd></div></dl>
         <div class="botones"><button class="btn borde" data-act="registrarMerma" data-id="${i.id}">${ic('alerta')} Registrar merma</button>${esAdmin() ? `<button class="btn borde tinta" data-act="editarInsumo" data-id="${i.id}">${ic('lapiz')} Editar</button>` : ''}</div></section>
+      <section class="tarjeta"><div class="titulo"><h2>Presentaciones de compra</h2>${esAdmin() ? `<button class="ver" data-act="agregarPresentacion" data-id="${i.id}">${ic('mas')} Agregar</button>` : ''}</div>
+        <p class="sub">El inventario se guarda en ${esc(i.unidad)}. Al pedir o recibir en cajas o piezas se convierte solo.</p>
+        ${S.presentaciones.filter(p => p.insumo_id === i.id).map(p => `<div class="fila"><div class="txt"><b>${esc(p.nombre)} = ${cant(p.contenido, i.unidad)}</b><small>${p.activo ? 'Vigente' : 'No vigente'}</small></div>
+          ${esAdmin() ? `<button class="ver" data-act="alternarPresentacion" data-id="${p.id}" data-activo="${p.activo ? '' : '1'}">${p.activo ? 'Marcar no vigente' : 'Volver a usar'}</button>` : ''}</div>`).join('') || '<p class="vacio">Sin presentaciones: se pide y recibe en ' + esc(i.unidad) + '.</p>'}</section>
       <section class="tarjeta">${titulo('Recetas que lo usan')}${usan.map(r => {
         const l = r.lineas.find(x => x.insumo_id === i.id);
         return `<a class="fila" href="#/receta/${r.id}"><div class="txt"><b>${esc(r.nombre)}</b><small>Neto ${cant(l.neta, i.unidad)} · Bruto ${cant(l.bruta, i.unidad)} · ${FUENTE[l.fuente]}</small></div><span class="chev">${ic('chev')}</span></a>`;
@@ -407,7 +417,7 @@ Object.assign(rutas, {
   },
 });
 
-const NOMBRE_MOV = { conteo: 'Conteo', recepcion: 'Entrada por recepción', devolucion: 'Devolución al proveedor', produccion: 'Consumo por producción', merma_adicional: 'Merma adicional' };
+const NOMBRE_MOV = { conteo: 'Conteo', recepcion: 'Entrada por recepción', devolucion: 'Devolución al proveedor', correccion_recepcion: 'Corrección de recepción',produccion: 'Consumo por producción', merma_adicional: 'Merma adicional' };
 
 function editorFilas(id, cols, filas = []) {
   const celda = (c, v = '') => (c.opciones
@@ -459,7 +469,7 @@ Object.assign(acciones, {
     else cont.querySelectorAll('input,select').forEach(e => { e.value = ''; });
   },
   async crearPedido() {
-    const { id } = await api('/api/pedidos', { proveedor_id: $('#np-prov').value, fecha_entrega: $('#np-fecha').value, asignado_id: $('#np-aux').value, lineas: leerFilas('np') });
+    const { id } = await api('/api/pedidos', { proveedor_id: $('#np-prov').value, fecha_entrega: $('#np-fecha').value, asignado_id: $('#np-aux').value, lineas: leerFilas('np').map(f => { const [insumo, presentacion] = f.insumo.split(':'); return { ...f, insumo, presentacion }; }) });
     avisar(`Pedido #${id} creado`);
     await refrescar();
     location.hash = `#/pedido/${id}`;
@@ -605,6 +615,32 @@ Object.assign(acciones, {
         if (d.archivo) await subir(d.archivo, { remision: n.id, tipo: 'remision_corregida' });
         location.hash = `#/remision/${n.id}`;
       },
+    });
+  },
+  agregarPresentacion({ id }) {
+    const i = insumoPor(Number(id));
+    formulario({
+      titulo: `Presentación de ${esc(i.nombre)}`, enviar: 'Agregar', exito: 'Presentación agregada',
+      campos: [{ tipo: 'info', html: `<p>Ejemplo: Caja = 10 ${esc(i.unidad)}. El contenido no se puede cambiar después; si cambia, agrega otra y marca esta como no vigente.</p>` },
+        { nombre: 'nombre', etiqueta: 'Nombre (caja, cubeta, pieza…) *', req: 1, extra: 'maxlength="40"' },
+        { nombre: 'contenido', etiqueta: `¿Cuántos ${esc(i.unidad)} trae? *`, tipo: 'number', req: 1 }],
+      alEnviar: d => api(`/api/insumos/${i.id}/presentaciones`, d),
+    });
+  },
+  async alternarPresentacion({ id, activo }) {
+    await api(`/api/presentaciones/${id}`, { activo: !!activo }, 'PUT');
+    avisar(activo ? 'Presentación vigente otra vez' : 'Presentación marcada como no vigente');
+    await refrescar();
+  },
+  corregirRecepcion({ id }) {
+    const r = S.recepciones.find(x => x.id === Number(id));
+    const k = clave();
+    formulario({
+      titulo: `Corregir recepción ${esc(r.folio)}`, enviar: 'Guardar corrección', exito: 'Corrección registrada. El inventario se ajustó por la diferencia.',
+      campos: [{ tipo: 'info', html: '<p>Escribe lo que de verdad llegó y se aceptó. La captura original se conserva y el inventario se ajusta solo por la diferencia. Si ya hay remisión emitida, se crea una versión nueva.</p>' },
+        ...r.lineas.map(l => ({ nombre: `a${l.insumo_id}`, etiqueta: `${esc(l.insumo)}: aceptado (${esc(l.unidad)})`, tipo: 'number', valor: +(l.aceptado + l.ajuste).toFixed(3), req: 1 })),
+        { nombre: 'motivo', etiqueta: 'Motivo de la corrección *', tipo: 'area', req: 1 }],
+      alEnviar: d => api(`/api/recepciones/${id}/correccion`, { clave: k, motivo: d.motivo, lineas: r.lineas.map(l => ({ insumo: l.insumo_id, aceptado: d[`a${l.insumo_id}`] })) }),
     });
   },
   cerrarFaltante({ id, insumo }) {

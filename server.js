@@ -134,7 +134,7 @@ function crearApp(rutaDb) {
     const pedidos = q(`SELECT id, estado, creado, fecha_entrega, recibido, folio, avance, promesa, nota_proveedor FROM pedidos
       WHERE proveedor_id = ? ORDER BY id DESC`, me.proveedor_id).map(p => ({
       ...p,
-      lineas: q(`SELECT l.insumo_id, i.nombre, i.unidad, l.cantidad, l.recibido, l.aceptado, l.rechazado, l.cerrado FROM pedido_lineas l
+      lineas: q(`SELECT l.insumo_id, i.nombre, i.unidad, l.cantidad, l.recibido, l.aceptado, l.rechazado, l.cerrado, l.presentacion, l.factor FROM pedido_lineas l
         JOIN insumos i ON i.id = l.insumo_id WHERE l.pedido_id = ? ORDER BY i.nombre`, p.id),
     })).map(p => ({ ...p, entrega: op.estadoEntrega(p, p.lineas, uno('SELECT COUNT(*) n FROM recepciones WHERE pedido_id = ?', p.id).n) }));
     return { me: { id: me.id, nombre: me.nombre, rol: me.rol, area: me.area }, proveedor, pedidos, ...op.estadoProveedor(me) };
@@ -157,6 +157,7 @@ function crearApp(rutaDb) {
       categorias: q('SELECT * FROM categorias ORDER BY id'),
       insumos: q('SELECT * FROM insumos ORDER BY nombre').map(i => ({ ...i, aprovechable: i.rendimiento === null ? null : r3(i.stock * i.rendimiento / 100) })),
       proveedores: q('SELECT * FROM proveedores ORDER BY nombre'),
+      presentaciones: q('SELECT * FROM presentaciones ORDER BY insumo_id, contenido'),
       solicitudes: q(`SELECT s.*, u.nombre solicitante, u.area solicitante_area, r.nombre revisor FROM solicitudes s
         JOIN usuarios u ON u.id = s.solicitante_id LEFT JOIN usuarios r ON r.id = s.revisor_id ORDER BY s.id DESC`).map(s => ({ ...s, lineas: linS[s.id] || [] })),
       pedidos: q(`SELECT p.*, u.nombre receptor, u.area receptor_area FROM pedidos p LEFT JOIN usuarios u ON u.id = p.receptor_id ORDER BY p.id DESC`)
@@ -205,6 +206,15 @@ function crearApp(rutaDb) {
       const r = run('UPDATE insumos SET nombre=?, categoria_id=?, unidad=?, min=?, max=?, codigo=?, proveedor_id=?, activo=?, rendimiento=?, costo=? WHERE id=?',
         d.nombre, d.categoria_id, d.unidad, d.min, d.max, d.codigo, d.proveedor_id, b.activo ? 1 : 0, d.rendimiento, d.costo, Number(id));
       if (!r.changes) throw new Falla(404, 'Insumo no encontrado');
+    }, 'admin'],
+    ['POST', /^\/api\/insumos\/(\d+)\/presentaciones$/, (b, me, [id]) => {
+      const i = insumo(id), nombre = texto(b.nombre, 'el nombre de la presentación', 40), contenido = r3(numero(b.contenido, 'Contenido'));
+      if (!contenido) throw new Falla(400, `Contenido: escribe cuántos ${i.unidad} trae`);
+      if (uno('SELECT 1 FROM presentaciones WHERE insumo_id = ? AND activo = 1 AND nombre = ?', i.id, nombre)) throw new Falla(409, `${i.nombre} ya tiene la presentación ${nombre}. Márcala como no vigente para crear otra.`);
+      return { id: Number(run('INSERT INTO presentaciones (insumo_id, nombre, contenido) VALUES (?,?,?)', i.id, nombre, contenido).lastInsertRowid) };
+    }, 'admin'],
+    ['PUT', /^\/api\/presentaciones\/(\d+)$/, (b, me, [id]) => {
+      if (!run('UPDATE presentaciones SET activo = ? WHERE id = ?', b.activo ? 1 : 0, Number(id)).changes) throw new Falla(404, 'Presentación no encontrada');
     }, 'admin'],
 
     ['POST', /^\/api\/proveedores$/, b => {

@@ -151,6 +151,10 @@ function sembrarDemo(db) {
   const linP = db.prepare('INSERT INTO pedido_lineas (pedido_id, insumo_id, cantidad) VALUES (2048,?,?)');
   [['Arroz', 20], ['Azúcar', 10], ['Refrescos', 48], ['Agua mineral', 24]].forEach(([n, c]) => linP.run(idDe(n), c));
 
+  const pres = db.prepare('INSERT INTO presentaciones (insumo_id, nombre, contenido) VALUES (?,?,?)');
+  [['Pollo (pechuga)', 'Caja', 10], ['Pollo (pechuga)', 'Pieza', 0.25], ['Aceite vegetal', 'Garrafa', 20], ['Jitomate', 'Caja', 25], ['Refrescos', 'Paquete de 12', 12]]
+    .forEach(([n, p, c]) => pres.run(idDe(n), p, c));
+
   db.prepare('INSERT INTO conteos (categoria_id, usuario_id, creado) VALUES (1, 3, ?)').run(haceHoras(26));
   const ev = db.prepare('INSERT INTO eventos (tipo, titulo, detalle, ref, creado) VALUES (?,?,?,?,?)');
   ev.run('alerta', 'Jitomate en bajo mínimo', 'Stock actual: 4 kg', '#/pedidos', haceHoras(28));
@@ -189,17 +193,43 @@ function migrar(db, ruta) {
   }
 }
 
-function migrarV2(db, ruta) {
-  if (db.prepare('PRAGMA user_version').get().user_version >= 2) return;
+// Una corrección no reescribe la recepción: guarda el antes y el después, y nunca se edita ni se borra.
+const MIGRACION_V3 = `
+CREATE TABLE correcciones (id INTEGER PRIMARY KEY AUTOINCREMENT, recepcion_id INTEGER NOT NULL REFERENCES recepciones(id), motivo TEXT NOT NULL,
+  usuario_id INTEGER NOT NULL REFERENCES usuarios(id), creado TEXT NOT NULL, clave TEXT UNIQUE);
+CREATE TABLE correccion_lineas (correccion_id INTEGER NOT NULL REFERENCES correcciones(id), insumo_id INTEGER NOT NULL REFERENCES insumos(id),
+  antes REAL NOT NULL CHECK (antes >= 0), nuevo REAL NOT NULL CHECK (nuevo >= 0), PRIMARY KEY (correccion_id, insumo_id));
+CREATE TRIGGER correcciones_fijas BEFORE UPDATE ON correcciones BEGIN SELECT RAISE(ABORT, 'Una corrección no se modifica'); END;
+CREATE TRIGGER correcciones_sin_borrar BEFORE DELETE ON correcciones BEGIN SELECT RAISE(ABORT, 'Una corrección no se borra'); END;
+CREATE TRIGGER correccion_lineas_fijas BEFORE UPDATE ON correccion_lineas BEGIN SELECT RAISE(ABORT, 'Una corrección no se modifica'); END;
+CREATE TRIGGER correccion_lineas_sin_borrar BEFORE DELETE ON correccion_lineas BEGIN SELECT RAISE(ABORT, 'Una corrección no se borra'); END;
+CREATE TRIGGER recepcion_lineas_fijas BEFORE UPDATE ON recepcion_lineas BEGIN SELECT RAISE(ABORT, 'La recepción original no se modifica: registra una corrección'); END;
+CREATE TRIGGER recepcion_lineas_sin_borrar BEFORE DELETE ON recepcion_lineas BEGIN SELECT RAISE(ABORT, 'La recepción original no se borra'); END;
+`;
+
+// Presentaciones de compra (caja, cubeta, pieza) con su contenido en la unidad del insumo. El inventario siempre se guarda en esa unidad.
+// El contenido no cambia: si la caja cambia, se crea otra presentación y la anterior queda no vigente. El pedido guarda la conversión usada.
+const MIGRACION_V4 = `
+CREATE TABLE presentaciones (id INTEGER PRIMARY KEY, insumo_id INTEGER NOT NULL REFERENCES insumos(id), nombre TEXT NOT NULL,
+  contenido REAL NOT NULL CHECK (contenido > 0), activo INTEGER NOT NULL DEFAULT 1);
+CREATE TRIGGER presentaciones_sin_borrar BEFORE DELETE ON presentaciones BEGIN SELECT RAISE(ABORT, 'Una presentación no se borra: márcala como no vigente'); END;
+CREATE TRIGGER presentaciones_contenido_fijo BEFORE UPDATE OF insumo_id, nombre, contenido ON presentaciones
+  BEGIN SELECT RAISE(ABORT, 'Una presentación no se modifica: crea otra y marca esta como no vigente'); END;
+ALTER TABLE pedido_lineas ADD COLUMN presentacion TEXT;
+ALTER TABLE pedido_lineas ADD COLUMN factor REAL CHECK (factor IS NULL OR factor > 0);
+`;
+
+function migrarA(db, ruta, version, sql) {
+  if (db.prepare('PRAGMA user_version').get().user_version >= version) return;
   if (ruta !== ':memory:') {
     db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    fs.copyFileSync(ruta, `${ruta}.respaldo-v1`);
+    fs.copyFileSync(ruta, `${ruta}.respaldo-v${version - 1}`);
   }
   db.exec('PRAGMA foreign_keys = OFF');
   db.exec('BEGIN');
   try {
-    db.exec(MIGRACION_V2);
-    db.exec('PRAGMA user_version = 2');
+    db.exec(sql);
+    db.exec(`PRAGMA user_version = ${version}`);
     db.exec('COMMIT');
   } catch (e) {
     db.exec('ROLLBACK');
@@ -218,7 +248,9 @@ function abrirDb(ruta) {
     db.exec('PRAGMA user_version = 1');
     db.exec('PRAGMA foreign_keys = OFF');
     db.exec(MIGRACION_V2);
-    db.exec('PRAGMA user_version = 2');
+    db.exec(MIGRACION_V3);
+    db.exec(MIGRACION_V4);
+    db.exec('PRAGMA user_version = 4');
     db.exec('PRAGMA foreign_keys = ON');
     db.exec('BEGIN');
     const cat = db.prepare('INSERT INTO categorias (nombre, icono, foto) VALUES (?,?,?)');
@@ -229,7 +261,9 @@ function abrirDb(ruta) {
     db.exec('COMMIT');
   }
   migrar(db, ruta);
-  migrarV2(db, ruta);
+  migrarA(db, ruta, 2, MIGRACION_V2);
+  migrarA(db, ruta, 3, MIGRACION_V3);
+  migrarA(db, ruta, 4, MIGRACION_V4);
   return db;
 }
 

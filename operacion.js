@@ -140,6 +140,63 @@ module.exports = function operacion(ctx) {
     return { id: rec };
   }
 
+  // Lo vigente de una línea es lo original más la suma de sus correcciones.
+  const AJUSTE = `(SELECT COALESCE(SUM(cl.nuevo - cl.antes), 0) FROM correccion_lineas cl JOIN correcciones c ON c.id = cl.correccion_id
+    WHERE c.recepcion_id = rl.recepcion_id AND cl.insumo_id = rl.insumo_id) ajuste`;
+
+  // Corrige lo que llegó y se aceptó en una recepción capturada con error. El registro original no cambia.
+  function corregirRecepcion(b, me, id) {
+    const k = clave(b);
+    if (k) {
+      const previa = uno('SELECT id FROM correcciones WHERE clave = ?', k);
+      if (previa) return { id: previa.id, repetida: true };
+    }
+    const rec = recepcionDe(id, me);
+    const p = pedidoDe(rec.pedido_id);
+    const motivo = texto(b.motivo, 'el motivo de la corrección', 300);
+    const cambios = lineas(b).map(e => {
+      const l = uno(`SELECT rl.*, ${AJUSTE} FROM recepcion_lineas rl WHERE rl.recepcion_id = ? AND rl.insumo_id = ?`, rec.id, Number(e.insumo));
+      if (!l) throw new Falla(400, 'Hay un producto que no pertenece a esta recepción');
+      const i = uno('SELECT * FROM insumos WHERE id = ?', l.insumo_id);
+      const antes = r3(l.aceptado + l.ajuste), nuevo = r3(numero(e.aceptado, i.nombre));
+      return { i, antes, nuevo, delta: r3(nuevo - antes) };
+    }).filter(c => c.delta);
+    if (!cambios.length) throw new Falla(400, 'No cambiaste ninguna cantidad');
+    for (const { i, delta } of cambios) {
+      const pl = uno('SELECT * FROM pedido_lineas WHERE pedido_id = ? AND insumo_id = ?', p.id, i.id);
+      if (delta > 0 && r3(pl.aceptado + delta) > pl.cantidad) throw new Falla(400, `${i.nombre}: el pedido es de ${pl.cantidad} ${i.unidad} y ya hay ${pl.aceptado} aceptados en todas sus entregas`);
+      if (delta < 0 && -delta > r3(pl.aceptado - pl.devuelto)) throw new Falla(400, `${i.nombre}: ya se devolvieron ${pl.devuelto} ${i.unidad} al proveedor; no puedes bajar más de ${r3(pl.aceptado - pl.devuelto)}`);
+      if (delta < 0 && -delta > i.stock) throw new Falla(400, `${i.nombre}: solo hay ${i.stock} ${i.unidad} en existencia. Registra primero el conteo real.`);
+    }
+    const { lastInsertRowid } = run('INSERT INTO correcciones (recepcion_id, motivo, usuario_id, creado, clave) VALUES (?,?,?,?,?)', rec.id, motivo, me.id, ahora(), k);
+    const cid = Number(lastInsertRowid);
+    for (const c of cambios) {
+      run('INSERT INTO correccion_lineas (correccion_id, insumo_id, antes, nuevo) VALUES (?,?,?,?)', cid, c.i.id, c.antes, c.nuevo);
+      run('UPDATE pedido_lineas SET recibido = MAX(COALESCE(recibido, 0) + ?, 0), aceptado = aceptado + ? WHERE pedido_id = ? AND insumo_id = ?', c.delta, c.delta, p.id, c.i.id);
+      moverStock(c.i, c.i.stock + c.delta, 'correccion_recepcion', me, { ref: `correccion:${cid}`, nota: `Folio ${rec.folio}: ${c.antes} → ${c.nuevo} ${c.i.unidad}. ${motivo}` });
+      // El faltante abierto pasa a ser lo que el pedido aún espera de este producto.
+      run("UPDATE incidencias SET estado = 'cerrada', cierre_nota = ?, cerrado = ? WHERE pedido_id = ? AND insumo_id = ? AND tipo = 'faltante' AND estado = 'abierta'",
+        `Actualizado por la corrección ${cid}`, ahora(), p.id, c.i.id);
+      const pl = uno('SELECT * FROM pedido_lineas WHERE pedido_id = ? AND insumo_id = ?', p.id, c.i.id);
+      const falta = pl.cerrado ? 0 : r3(pl.cantidad - pl.aceptado);
+      if (falta > 0) incidencia(rec.id, p, c.i, 'faltante', falta, null, `Corrección: ${motivo}`, me);
+    }
+    const abierto = q('SELECT * FROM pedido_lineas WHERE pedido_id = ?', p.id).some(l => !l.cerrado && l.aceptado < l.cantidad);
+    if (abierto) run("UPDATE pedidos SET estado = 'en_proceso' WHERE id = ?", p.id);
+    else cerrarSiCompleto(p.id, me);
+
+    const vigente = uno("SELECT id, estado FROM remisiones WHERE recepcion_id = ? AND estado <> 'reemplazada'", rec.id);
+    const motivoRem = `Corrección de cantidades: ${motivo}`;
+    if (vigente?.estado === 'borrador') {
+      const r = remisionDe(vigente.id, me);
+      const notas_linea = Object.fromEntries(r.contenido.lineas.map(l => [l.insumo_id, l.nota]));
+      run('UPDATE remisiones SET contenido = ? WHERE id = ?', JSON.stringify(contenidoRemision(rec, { lugar: r.contenido.lugar, notas: r.contenido.notas, notas_linea }, r.contenido.correccion)), r.id);
+      historial(r.id, 'borrador', `Cantidades actualizadas. ${motivoRem}`, me);
+    } else if (vigente) nuevaVersion(remisionDe(vigente.id, me), motivoRem, me);
+    evento('alerta', `Recepción ${rec.folio} corregida`, `Corrigió ${me.nombre}: ${motivo}`, `#/expediente/${rec.id}`);
+    return { id: cid };
+  }
+
   function contenidoRemision(rec, datos, correccion) {
     const p = pedidoDe(rec.pedido_id);
     const prov = uno('SELECT nombre, razon_social, rfc FROM proveedores WHERE id = ?', p.proveedor_id);
@@ -148,10 +205,10 @@ module.exports = function operacion(ctx) {
       lugar: datos.lugar, notas: datos.notas || '', pedido: p.id, folio_entrega: rec.folio, fecha_recepcion: rec.creado,
       recibio: uno('SELECT nombre FROM usuarios WHERE id = ?', rec.usuario_id).nombre,
       proveedor: prov, correccion: correccion || null,
-      lineas: q(`SELECT rl.*, i.nombre insumo, pl.precio FROM recepcion_lineas rl JOIN insumos i ON i.id = rl.insumo_id
+      lineas: q(`SELECT rl.*, ${AJUSTE}, i.nombre insumo, pl.precio FROM recepcion_lineas rl JOIN insumos i ON i.id = rl.insumo_id
         JOIN pedido_lineas pl ON pl.insumo_id = rl.insumo_id AND pl.pedido_id = ? WHERE rl.recepcion_id = ? ORDER BY i.nombre`, p.id, rec.id).map(l => ({
-        insumo_id: l.insumo_id, insumo: l.insumo, unidad: l.unidad, pedida: l.pedida, recibida: l.recibido, aceptada: l.aceptado, rechazada: l.rechazado,
-        pendiente: l.pendiente, motivo: l.motivo, nota: notasLinea[l.insumo_id] ?? l.nota, precio: l.precio,
+        insumo_id: l.insumo_id, insumo: l.insumo, unidad: l.unidad, pedida: l.pedida, recibida: r3(l.recibido + l.ajuste), aceptada: r3(l.aceptado + l.ajuste), rechazada: l.rechazado,
+        pendiente: Math.max(0, r3(l.pendiente - l.ajuste)), motivo: l.motivo, nota: notasLinea[l.insumo_id] ?? l.nota, precio: l.precio,
       })),
       incidencias: q(`SELECT n.tipo, n.cantidad, n.unidad, n.motivo, n.nota, i.nombre insumo FROM incidencias n JOIN insumos i ON i.id = n.insumo_id
         WHERE n.recepcion_id = ? AND n.tipo <> 'observacion' ORDER BY n.id`, rec.id),
@@ -257,14 +314,17 @@ module.exports = function operacion(ctx) {
 
   function estadoInterno(me) {
     const agrupar = (filas, llave) => filas.reduce((m, f) => ((m[f[llave]] ||= []).push(f), m), {});
-    const lineasRec = agrupar(q('SELECT rl.*, i.nombre insumo FROM recepcion_lineas rl JOIN insumos i ON i.id = rl.insumo_id ORDER BY i.nombre'), 'recepcion_id');
+    const lineasRec = agrupar(q(`SELECT rl.*, ${AJUSTE}, i.nombre insumo FROM recepcion_lineas rl JOIN insumos i ON i.id = rl.insumo_id ORDER BY i.nombre`), 'recepcion_id');
+    const lineasCorr = agrupar(q('SELECT cl.*, i.nombre insumo, i.unidad FROM correccion_lineas cl JOIN insumos i ON i.id = cl.insumo_id ORDER BY i.nombre'), 'correccion_id');
+    const corr = agrupar(q('SELECT c.*, u.nombre usuario FROM correcciones c JOIN usuarios u ON u.id = c.usuario_id ORDER BY c.id DESC')
+      .map(c => ({ ...c, lineas: lineasCorr[c.id] || [] })), 'recepcion_id');
     const firmas = agrupar(q('SELECT * FROM firmas').map(f => ({ ...f, trazos: json(f.trazos) })), 'remision_id');
     const envios = agrupar(q('SELECT * FROM envios ORDER BY id DESC'), 'remision_id');
     const hist = agrupar(q('SELECT * FROM remision_historial ORDER BY id DESC'), 'remision_id');
     const lineasDev = agrupar(q('SELECT dl.*, i.nombre insumo, i.unidad FROM devolucion_lineas dl JOIN insumos i ON i.id = dl.insumo_id'), 'devolucion_id');
     return {
       recepciones: q('SELECT r.*, u.nombre usuario FROM recepciones r JOIN usuarios u ON u.id = r.usuario_id ORDER BY r.id DESC').map(r => ({
-        ...r, checklist: json(r.checklist), lineas: lineasRec[r.id] || [],
+        ...r, checklist: json(r.checklist), lineas: lineasRec[r.id] || [], correcciones: corr[r.id] || [],
       })),
       remisiones: q('SELECT * FROM remisiones ORDER BY id DESC').map(r => ({
         ...r, contenido: json(r.contenido), devolucion: json(r.devolucion), firmas: firmas[r.id] || [], envios: envios[r.id] || [], historial: hist[r.id] || [],
@@ -302,15 +362,19 @@ module.exports = function operacion(ctx) {
       if (!prov) throw new Falla(400, 'Elige un proveedor');
       const entrega = fecha(b.fecha_entrega);
       const ls = lineas(b).map(l => {
-        const i = insumo(l.insumo), cantidad = numero(l.cantidad, i.nombre);
-        if (!cantidad) throw new Falla(400, `${i.nombre}: la cantidad debe ser mayor a cero`);
-        return [i.id, cantidad, l.precio === '' || l.precio === undefined || l.precio === null ? i.costo : numero(l.precio, `Precio de ${i.nombre}`)];
+        const i = insumo(l.insumo), n = numero(l.cantidad, i.nombre);
+        if (!n) throw new Falla(400, `${i.nombre}: la cantidad debe ser mayor a cero`);
+        // Con presentación, la cantidad viene en cajas o piezas y se guarda convertida a la unidad del insumo.
+        const pres = l.presentacion ? uno('SELECT * FROM presentaciones WHERE id = ? AND insumo_id = ? AND activo = 1', Number(l.presentacion), i.id) : null;
+        if (l.presentacion && !pres) throw new Falla(400, `${i.nombre}: la presentación no existe o ya no está vigente`);
+        const precio = l.precio === '' || l.precio === undefined || l.precio === null ? i.costo : numero(l.precio, `Precio de ${i.nombre}`);
+        return [i.id, pres ? r3(n * pres.contenido) : n, precio, pres?.nombre ?? null, pres?.contenido ?? null];
       });
       const asignado = b.asignado_id ? Number(b.asignado_id) : null;
       if (asignado && !uno("SELECT 1 FROM usuarios WHERE id = ? AND rol = 'auxiliar' AND activo = 1", asignado)) throw new Falla(400, 'Auxiliar no encontrado');
       const { lastInsertRowid } = run('INSERT INTO pedidos (proveedor_id, creado, fecha_entrega, asignado_id) VALUES (?,?,?,?)', prov, ahora(), entrega, asignado);
       const id = Number(lastInsertRowid);
-      ls.forEach(l => run('INSERT INTO pedido_lineas (pedido_id, insumo_id, cantidad, precio) VALUES (?,?,?,?)', id, ...l));
+      ls.forEach(l => run('INSERT INTO pedido_lineas (pedido_id, insumo_id, cantidad, precio, presentacion, factor) VALUES (?,?,?,?,?,?)', id, ...l));
       evento('pedido', `Pedido #${id}`, 'En proceso', `#/pedido/${id}`);
       return { id };
     }, 'admin'],
@@ -327,6 +391,7 @@ module.exports = function operacion(ctx) {
     }, 'admin'],
 
     ['POST', /^\/api\/pedidos\/(\d+)\/recepcion$/, (b, me, [id]) => registrarRecepcion(b, me, id)],
+    ['POST', /^\/api\/recepciones\/(\d+)\/correccion$/, (b, me, [id]) => corregirRecepcion(b, me, id), 'admin'],
     ['POST', /^\/api\/pedidos\/(\d+)\/faltantes\/(\d+)\/cerrar$/, (b, me, [id, insumoId]) => {
       const p = pedidoDe(id);
       puedeOperar(p, me);

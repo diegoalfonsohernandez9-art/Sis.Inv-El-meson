@@ -366,3 +366,79 @@ test('receta: consumo, merma prevista contra adicional, costo y sin duplicar', a
   assert.equal((await llamar('POST', `/api/recetas/${id}/produccion`, { porciones: 100000 }, juan)).status, 409);
   assert.equal((await estado(leo)).insumos.find(i => i.id === leche.id).stock, stockFinal);
 });
+
+test('corrección de recepción: solo admin, ajusta por diferencia, conserva el original y versiona la remisión', async () => {
+  const { id, pollo } = await pedidoPollo(20);
+  const antes = await stock('Pollo (pechuga)');
+  const r = await ok('POST', `/api/pedidos/${id}/recepcion`, { folio: 'NOTA-C1', lineas: [{ insumo: pollo.id, recibido: 20, aceptado: 20 }] }, carlos);
+  const rem = await ok('POST', `/api/recepciones/${r.id}/remision`, {}, carlos);
+  await ok('POST', `/api/remisiones/${rem.id}/emitir`, {}, carlos);
+  const ruta = `/api/recepciones/${r.id}/correccion`;
+  const cuerpo = { clave: 'clave-correccion-01', motivo: 'Se capturó 20, llegaron 12', lineas: [{ insumo: pollo.id, aceptado: 12 }] };
+
+  // Permisos en el servidor y validaciones.
+  assert.equal((await llamar('POST', ruta, cuerpo, carlos)).status, 403);
+  assert.equal((await llamar('POST', ruta, cuerpo, juan)).status, 403);
+  assert.equal((await llamar('POST', ruta, { ...cuerpo, motivo: '' }, leo)).status, 400);
+  assert.equal((await llamar('POST', ruta, { ...cuerpo, lineas: [{ insumo: pollo.id, aceptado: 21 }] }, leo)).status, 400, 'no se acepta más de lo pedido');
+  assert.equal((await llamar('POST', ruta, { ...cuerpo, lineas: [{ insumo: pollo.id, aceptado: 20 }] }, leo)).status, 400, 'sin cambios');
+
+  const c = await ok('POST', ruta, cuerpo, leo);
+  assert.equal(await stock('Pollo (pechuga)'), antes + 12);
+  // Reintento con la misma clave: no vuelve a mover inventario.
+  assert.equal((await ok('POST', ruta, cuerpo, leo)).repetida, true);
+  assert.equal(await stock('Pollo (pechuga)'), antes + 12);
+  assert.equal((await movs('correccion_recepcion', `correccion:${c.id}`))[0].delta, -8);
+
+  let e = await estado(leo);
+  const rec = e.recepciones.find(x => x.id === r.id);
+  assert.equal(rec.lineas[0].aceptado, 20, 'la captura original no cambia');
+  assert.equal(rec.lineas[0].aceptado + rec.lineas[0].ajuste, 12);
+  assert.deepEqual(rec.correcciones[0].lineas.map(l => [l.antes, l.nuevo]), [[20, 12]]);
+  const ped = e.pedidos.find(p => p.id === id);
+  assert.equal(ped.estado, 'en_proceso', 'vuelve a esperar lo que falta');
+  assert.equal(e.incidencias.find(i => i.pedido_id === id && i.tipo === 'faltante' && i.estado === 'abierta').cantidad, 8);
+  const vigente = e.remisiones.find(x => x.recepcion_id === r.id && x.estado !== 'reemplazada');
+  assert.equal(vigente.version, 2);
+  assert.equal(vigente.estado, 'borrador');
+  assert.equal(vigente.contenido.lineas[0].aceptada, 12);
+
+  // Se corrige al alza hasta completar: el pedido se cierra otra vez.
+  await ok('POST', ruta, { motivo: 'Sí llegaron los 20', lineas: [{ insumo: pollo.id, aceptado: 20 }] }, leo);
+  e = await estado(leo);
+  assert.equal(e.pedidos.find(p => p.id === id).estado, 'recibido');
+  assert.equal(e.incidencias.filter(i => i.pedido_id === id && i.tipo === 'faltante' && i.estado === 'abierta').length, 0);
+  assert.equal(await stock('Pollo (pechuga)'), antes + 20);
+
+  // No se baja por debajo de lo ya devuelto.
+  await ok('POST', `/api/pedidos/${id}/devoluciones`, { comprobante: 'DEV-C1', motivo: 'Mal estado', lineas: [{ insumo: pollo.id, cantidad: 15 }] }, carlos);
+  assert.equal((await llamar('POST', ruta, { motivo: 'x', lineas: [{ insumo: pollo.id, aceptado: 4 }] }, leo)).status, 400);
+});
+
+test('presentaciones: pedido en cajas se guarda en kg, recepción suma kg, solo admin las crea y no se borran', async () => {
+  const e0 = await estado(leo);
+  const pollo = e0.insumos.find(i => i.nombre === 'Pollo (pechuga)');
+  const arroz = e0.insumos.find(i => i.nombre === 'Arroz');
+  assert.equal((await llamar('POST', `/api/insumos/${pollo.id}/presentaciones`, { nombre: 'Bolsa', contenido: 5 }, carlos)).status, 403);
+  assert.equal((await llamar('POST', `/api/insumos/${pollo.id}/presentaciones`, { nombre: 'Bolsa', contenido: 0 }, leo)).status, 400);
+  const { id: bolsa } = await ok('POST', `/api/insumos/${pollo.id}/presentaciones`, { nombre: 'Bolsa', contenido: 5 }, leo);
+  assert.equal((await llamar('POST', `/api/insumos/${pollo.id}/presentaciones`, { nombre: 'Bolsa', contenido: 6 }, leo)).status, 409);
+
+  // Una presentación de otro insumo no se acepta.
+  assert.equal((await llamar('POST', '/api/pedidos', { proveedor_id: 1, fecha_entrega: '2030-01-01', lineas: [{ insumo: arroz.id, presentacion: bolsa, cantidad: 2 }] }, leo)).status, 400);
+
+  const { id } = await ok('POST', '/api/pedidos', { proveedor_id: 1, fecha_entrega: '2030-01-01', lineas: [{ insumo: pollo.id, presentacion: bolsa, cantidad: 3, precio: 80 }] }, leo);
+  let ped = (await estado(leo)).pedidos.find(p => p.id === id);
+  assert.deepEqual([ped.lineas[0].cantidad, ped.lineas[0].presentacion, ped.lineas[0].factor], [15, 'Bolsa', 5]);
+
+  const antes = await stock('Pollo (pechuga)');
+  await ok('POST', `/api/pedidos/${id}/recepcion`, { folio: 'NOTA-P1', lineas: [{ insumo: pollo.id, recibido: 15 }] }, carlos);
+  assert.equal(await stock('Pollo (pechuga)'), antes + 15);
+
+  // No vigente: ya no se puede pedir, pero el pedido viejo conserva su conversión.
+  await ok('PUT', `/api/presentaciones/${bolsa}`, { activo: false }, leo);
+  assert.equal((await llamar('POST', '/api/pedidos', { proveedor_id: 1, fecha_entrega: '2030-01-01', lineas: [{ insumo: pollo.id, presentacion: bolsa, cantidad: 1 }] }, leo)).status, 400);
+  ped = (await estado(leo)).pedidos.find(p => p.id === id);
+  assert.equal(ped.lineas[0].factor, 5);
+  assert.equal((await estado(leo)).presentaciones.find(p => p.id === bolsa).activo, 0, 'se conserva como no vigente');
+});

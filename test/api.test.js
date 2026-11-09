@@ -174,7 +174,9 @@ test('la migración v0 → v1 conserva datos y deja respaldo', () => {
   assert.equal(u.activo, 0);
   assert.equal(db.prepare('SELECT avance FROM pedidos').get().avance, 'por_confirmar');
   assert.ok(fs.existsSync(`${ruta}.respaldo-v1`));
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 2);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 4);
+  assert.ok(fs.existsSync(`${ruta}.respaldo-v2`));
+  assert.ok(fs.existsSync(`${ruta}.respaldo-v3`));
   const pl = db.prepare('SELECT aceptado, recibido FROM pedido_lineas').get();
   assert.deepEqual([pl.aceptado, pl.recibido], [18, 18], 'lo recibido antes ya estaba en inventario');
   const rec = db.prepare('SELECT * FROM recepciones').get();
@@ -199,4 +201,13 @@ test('un usuario desactivado pierde la sesión', async () => {
   const c = (await llamar('POST', '/api/login', { usuario_id: t.id, pin: '5678' })).cookie;
   await llamar('PUT', `/api/usuarios/${t.id}`, { nombre: 'Temporal', rol: 'staff', area: 'Barra', activo: false }, leo);
   assert.equal((await llamar('GET', '/api/estado', undefined, c)).status, 401);
+});
+
+test('una presentación no se borra ni cambia su contenido en la base', () => {
+  const { abrirDb } = require('../db');
+  const db = abrirDb(':memory:');
+  const p = db.prepare('SELECT id FROM presentaciones LIMIT 1').get();
+  assert.throws(() => db.prepare('DELETE FROM presentaciones WHERE id = ?').run(p.id), /no se borra/);
+  assert.throws(() => db.prepare('UPDATE presentaciones SET contenido = 99 WHERE id = ?').run(p.id), /no se modifica/);
+  db.prepare('UPDATE presentaciones SET activo = 0 WHERE id = ?').run(p.id);
 });

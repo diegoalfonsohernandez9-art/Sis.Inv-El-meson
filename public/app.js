@@ -77,6 +77,10 @@ function cuando(iso) {
 const fechaCorta = f => (f ? new Date(`${f}T12:00`).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Sin fecha');
 const unidad = (n, u) => (n === 1 || u.length <= 2 ? u : `${u}s`);
 const cant = (n, u) => `${+n} ${unidad(+n, u)}`;
+const presDe = id => S.presentaciones.filter(p => p.insumo_id === id && p.activo);
+// Ayuda visual: la existencia expresada en la presentación más grande del insumo.
+const equivalente = i => { const p = presDe(i.id).at(-1); return p ? ` ≈ ${+(i.stock / p.contenido).toFixed(1)} × ${esc(p.nombre)}` : ''; };
+const enPres = l => (l.factor ? ` · ${+(l.cantidad / l.factor).toFixed(2)} × ${esc(l.presentacion)} de ${+l.factor}` : '');
 
 // Crítico por debajo de una cuarta parte del mínimo; bajo por debajo del mínimo.
 const estadoDe = (stock, min) => (stock < min * 0.25 ? 'critico' : stock < min ? 'bajo' : 'ok');
@@ -164,7 +168,7 @@ const rutas = {
     const filtro = String(val('buscar', '')).toLowerCase();
     const lista = S.insumos.filter(i => (!cat || i.categoria_id === cat.id) && (esAdmin() || i.activo) && i.nombre.toLowerCase().includes(filtro));
     const fila = i => `<a class="fila" href="#/insumo/${i.id}">${foto(i)}
-      <div class="txt"><b>${esc(i.nombre)}${i.activo ? '' : ' (inactivo)'}</b><small>${cant(i.stock, i.unidad)} · ${i.rendimiento === null ? 'Rendimiento sin capturar' : `Rinde ${+i.rendimiento} % · Aprovechable ${cant(i.aprovechable, i.unidad)}`}</small></div>
+      <div class="txt"><b>${esc(i.nombre)}${i.activo ? '' : ' (inactivo)'}</b><small>${cant(i.stock, i.unidad)}${equivalente(i)} · ${i.rendimiento === null ? 'Rendimiento sin capturar' : `Rinde ${+i.rendimiento} % · Aprovechable ${cant(i.aprovechable, i.unidad)}`}</small></div>
       ${chip(estadoDe(i.stock, i.min))}</a>`;
     return `<main class="contenido sin-hero">
       ${esAdmin() ? `<button class="btn" data-act="nuevoInsumo">${ic('mas')} Agregar insumo</button>` : ''}
@@ -318,7 +322,7 @@ const rutas = {
       <section class="tarjeta">${titulo('Productos')}
         ${p.lineas.map(l => {
           const i = insumoPor(l.insumo_id), pend = pendienteDe(l);
-          return `<div class="prod"><b>${esc(i.nombre)}</b> <small>(${esc(i.unidad)})${l.precio !== null ? ` · ${dinero(l.precio)}` : ''}</small>
+          return `<div class="prod"><b>${esc(i.nombre)}</b> <small>(${esc(i.unidad)})${enPres(l)}${l.precio !== null ? ` · ${dinero(l.precio)} por ${esc(i.unidad)}` : ''}</small>
             ${nums([['Pedida', +l.cantidad], ['Recibida', +(l.recibido || 0)], ['Aceptada', +l.aceptado, 'verde-t'], ['Rechazada', +l.rechazado, l.rechazado ? 'rojo-t' : ''], ['Pendiente', pend, pend ? 'rojo-t' : '']])}
             ${l.devuelto ? `<p class="mini-nota">Devuelta al proveedor: ${cant(l.devuelto, i.unidad)}</p>` : ''}
             ${l.cerrado ? `<p class="mini-nota">Faltante cerrado: ${esc(l.cierre_motivo)}</p>` : ''}
@@ -453,7 +457,7 @@ Object.assign(rutas, {
         </div></section>
       <section class="tarjeta">${titulo('Productos')}
         <table><thead><tr><th>Producto</th><th>Pedido</th>${abierto ? '' : '<th>Aceptado</th>'}</tr></thead><tbody>
-        ${p.lineas.map(l => `<tr><td><b>${esc(l.nombre)}</b></td><td>${cant(l.cantidad, l.unidad)}</td>
+        ${p.lineas.map(l => `<tr><td><b>${esc(l.nombre)}</b></td><td>${cant(l.cantidad, l.unidad)}${enPres(l)}</td>
           ${abierto ? '' : `<td class="${l.aceptado >= l.cantidad ? 'verde-t' : 'rojo-t'}">${cant(l.aceptado, l.unidad)}</td>`}</tr>`).join('')}</tbody></table></section>
       ${p.nota_proveedor ? `<p class="nota">Avisaste: ${esc(p.nota_proveedor)}</p>` : ''}
       ${abierto ? `<div class="pila">
