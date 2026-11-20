@@ -77,6 +77,9 @@ function cuando(iso) {
 const fechaCorta = f => (f ? new Date(`${f}T12:00`).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Sin fecha');
 const unidad = (n, u) => (n === 1 || u.length <= 2 ? u : `${u}s`);
 const cant = (n, u) => `${+n} ${unidad(+n, u)}`;
+// La merma se captura (el pollo pierde 40 %), pero se guarda como rendimiento (60 %) para no cambiar los datos existentes.
+const mermaDe = r => (r === null || r === undefined || r === '' ? '' : +(100 - r).toFixed(3));
+const rendDe = m => (m === null || m === undefined || m === '' ? '' : 100 - Number(m));
 const presDe = id => S.presentaciones.filter(p => p.insumo_id === id && p.activo);
 // Ayuda visual: la existencia expresada en la presentación más grande del insumo.
 const equivalente = i => { const p = presDe(i.id).at(-1); return p ? ` ≈ ${+(i.stock / p.contenido).toFixed(1)} × ${esc(p.nombre)}` : ''; };
@@ -154,8 +157,9 @@ const rutas = {
         ${stat(conteosHoy, 'Conteos hoy', 'lista', '', '#/conteo')}
       </div>
       <div class="cats">${cats}</div>
+      ${capturaRapida()}
       <a class="btn" href="#/conteo">${ic('lista')} Registrar conteo</a>
-      ${esAdmin() ? `<a class="btn borde tinta" href="#/rendimientos">${ic('lapiz')} Capturar rendimientos y precios${activos().some(i => i.rendimiento === null || i.costo === null) ? ` (faltan ${activos().filter(i => i.rendimiento === null || i.costo === null).length})` : ''}</a>` : ''}
+      ${esAdmin() ? `<a class="btn borde tinta" href="#/rendimientos">${ic('lapiz')} Capturar merma y precios${activos().some(i => i.rendimiento === null || i.costo === null) ? ` (faltan ${activos().filter(i => i.rendimiento === null || i.costo === null).length})` : ''}</a>` : ''}
       <section class="tarjeta alerta-t">${titulo(`<span class="rojo-t">${ic('alerta')}</span> Alertas críticas`, '#/pedidos', 'Ver todas')}
         ${criticos().map(i => `<a class="fila" href="#/pedidos">${foto(i)}
           <div class="txt"><b>${esc(i.nombre)}</b><small>Stock actual: <span class="rojo-t">${cant(i.stock, i.unidad)}</span></small></div>
@@ -168,12 +172,12 @@ const rutas = {
     const filtro = String(val('buscar', '')).toLowerCase();
     const lista = S.insumos.filter(i => (!cat || i.categoria_id === cat.id) && (esAdmin() || i.activo) && i.nombre.toLowerCase().includes(filtro));
     const fila = i => `<a class="fila" href="#/insumo/${i.id}">${foto(i)}
-      <div class="txt"><b>${esc(i.nombre)}${i.activo ? '' : ' (inactivo)'}</b><small>${cant(i.stock, i.unidad)}${equivalente(i)} · ${i.rendimiento === null ? 'Rendimiento sin capturar' : `Rinde ${+i.rendimiento} % · Aprovechable ${cant(i.aprovechable, i.unidad)}`}</small></div>
+      <div class="txt"><b>${esc(i.nombre)}${i.activo ? '' : ' (inactivo)'}</b><small>${cant(i.stock, i.unidad)}${equivalente(i)} · ${i.rendimiento === null ? 'Merma sin capturar' : `Merma ${mermaDe(i.rendimiento)} % · Aprovechable ${cant(i.aprovechable, i.unidad)}`}</small></div>
       ${chip(estadoDe(i.stock, i.min))}</a>`;
     return `<main class="contenido sin-hero">
       ${esAdmin() ? `<button class="btn" data-act="nuevoInsumo">${ic('mas')} Agregar insumo</button>` : ''}
       <input class="buscar" type="search" placeholder="Buscar insumo" aria-label="Buscar insumo" data-draft="buscar" data-live="buscar" value="${esc(val('buscar', ''))}">
-      <section class="tarjeta">${titulo(esc(cat?.nombre || 'Todos los insumos'))}<div id="lista-insumos">
+      <section class="tarjeta">${titulo(esc(cat?.nombre || 'Todos los insumos'))}<div id="lista-insumos" class="rejilla">
         ${lista.map(fila).join('') || '<p class="vacio">No hay insumos.</p>'}</div></section></main>`;
   },
 
@@ -184,6 +188,7 @@ const rutas = {
     return `<section class="hero">${''}<h1>Conteo</h1><p>Registra existencias por categoría y actualiza el stock del día.</p></section>
     <main class="contenido">
       <div class="pestanas">${S.categorias.map(c => `<a class="pestana ${c.id === cat.id ? 'on' : ''}" href="#/conteo/${c.id}">${ic(c.icono)}${esc(c.nombre)}</a>`).join('')}</div>
+      ${capturaRapida()}
       <section class="tarjeta">
         <div class="titulo"><h2>Conteo de hoy</h2><span class="meta">${new Date().toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}</span></div>
         ${items.length ? `<table><thead><tr><th>Insumo</th><th>Cantidad</th><th>Mín / Máx</th><th>Estado</th></tr></thead><tbody>
@@ -198,7 +203,6 @@ const rutas = {
         <small>Registrado por ${esc(ultimo.usuario)}<br>${cuando(ultimo.creado)}</small></div></section>` : ''}
       <div class="botones">
         <button class="btn" data-act="guardarConteo" data-cat="${cat.id}" ${items.length ? '' : 'disabled'}>${ic('guardar')} Guardar conteo</button>
-        <button class="btn borde tinta" data-act="escanear">${ic('codigo')} Escanear insumo</button>
       </div></main>`;
   },
 
@@ -330,7 +334,7 @@ const rutas = {
         }).join('')}</section>
       <section class="tarjeta">${titulo(`Entregas (${recs.length})`)}
         ${recs.map(r => `<a class="fila" href="#/expediente/${r.id}"><div class="txt"><b>Folio ${esc(r.folio)}</b><small>${esc(r.usuario)} · ${cuando(r.creado)}</small></div>${chipEntrega(r.estado)}<span class="chev">${ic('chev')}</span></a>`).join('') || '<p class="vacio">Aún no se recibe nada de este pedido.</p>'}</section>
-      <section class="tarjeta"><div class="titulo"><h2>Documentos (${docs.length})</h2><button class="ver" data-act="adjuntar" data-pedido="${p.id}">${ic('mas')} Adjuntar</button></div>${listaDocs(docs)}</section>
+      <section class="tarjeta"><div class="titulo"><h2>Documentos (${docs.length})</h2><span><button class="ver" data-act="adjuntar" data-pedido="${p.id}" data-tipo="factura">${ic('mas')} Factura</button> <button class="ver" data-act="adjuntar" data-pedido="${p.id}">${ic('mas')} Adjuntar</button></span></div>${listaDocs(docs)}</section>
       ${devs.length ? `<section class="tarjeta">${titulo('Devoluciones de mercancía')}${devs.map(d => `<div class="fila"><div class="txt"><b>Comprobante ${esc(d.comprobante)}</b><small>${d.lineas.map(l => `${esc(l.insumo)} ${+l.cantidad} ${esc(l.unidad)}: ${esc(l.motivo)}`).join('; ')} · ${esc(d.usuario)} · ${cuando(d.creado)}</small></div></div>`).join('')}</section>` : ''}
       <div class="pila">
         ${p.lineas.some(l => l.aceptado - l.devuelto > 0) && puedoOperar(p) ? `<button class="btn borde" data-act="devolverMercancia" data-id="${p.id}">${ic('caja')} Devolver mercancía</button>` : ''}
@@ -342,7 +346,7 @@ const rutas = {
   proveedores() {
     return `<main class="contenido sin-hero">
       ${esAdmin() ? `<button class="btn" data-act="nuevoProveedor">${ic('mas')} Agregar proveedor</button>` : ''}
-      <section class="tarjeta">${titulo('Proveedores')}
+      <section class="tarjeta rejilla">${titulo('Proveedores')}
       ${S.proveedores.map(p => `<div class="fila"><a class="txt" href="#/proveedor/${p.id}"><b>${esc(p.nombre)}</b><small>${p.rfc ? `RFC ${esc(p.rfc)}` : 'Datos fiscales sin capturar'}</small></a>${contacto(p)}<a href="#/proveedor/${p.id}" aria-label="Abrir ficha de ${esc(p.nombre)}" class="chev" style="padding:10px 0 10px 6px">${ic('chev')}</a></div>`).join('') || '<p class="vacio">Sin proveedores.</p>'}
       </section></main>`;
   },
@@ -554,8 +558,8 @@ async function refrescar() {
 }
 
 async function login(errorInicial = '') {
-  document.body.className = '';
-  const usuarios = await api('/api/usuarios');
+  const [usuarios, config] = await Promise.all([api('/api/usuarios'), api('/api/config')]);
+  document.body.className = 'acceso'; // después del await: el arranque sin sesión limpia la clase mientras tanto
   const tipos = [['admin', 'Admin', 'escudo'], ['staff', 'Cocina', 'lista'], ['auxiliar', 'Auxiliar', 'caja'], ['proveedor', 'Proveedor', 'camion']];
   let ultimo = null;
   try { ultimo = Number(localStorage.getItem('meson.usuario')); } catch {}
@@ -566,7 +570,8 @@ async function login(errorInicial = '') {
       ${tipos.map(([id, n, i]) => `<button type="button" class="pestana" data-tipo="${id}">${ic(i)}${n}</button>`).join('')}</div>
     <form id="form-login">
       <label class="campo">Usuario<select name="usuario_id" required></select></label>
-      <label class="campo">PIN<input name="pin" type="password" inputmode="numeric" autocomplete="current-password" required autofocus></label>
+      ${config.sin_pin ? '<p class="nota-info"><span><b>Modo desarrollo:</b> se entra sin PIN. Los permisos de cada rol siguen activos.</span></p>'
+        : '<label class="campo">PIN<input name="pin" type="password" inputmode="numeric" autocomplete="current-password" required autofocus></label>'}
       <p class="error" role="alert">${esc(errorInicial)}</p>
       <button class="btn">Entrar</button></form></main>`;
   const elegir = tipo => {
@@ -578,12 +583,12 @@ async function login(errorInicial = '') {
   };
   document.querySelectorAll('[data-tipo]').forEach(b => { b.onclick = () => elegir(b.dataset.tipo); });
   elegir(previo?.rol || 'admin');
-  if (previo) { $('[name=usuario_id]').value = previo.id; $('[name=pin]').focus(); }
+  if (previo) { $('[name=usuario_id]').value = previo.id; $('[name=pin]')?.focus(); }
   $('#form-login').addEventListener('submit', async e => {
     e.preventDefault();
     const f = new FormData(e.target);
     try {
-      await api('/api/login', { usuario_id: Number(f.get('usuario_id')), pin: f.get('pin') });
+      await api('/api/login', { usuario_id: Number(f.get('usuario_id')), pin: f.get('pin') ?? '' });
       try { localStorage.setItem('meson.usuario', f.get('usuario_id')); } catch {}
       await refrescar();
     } catch (err) {
@@ -651,7 +656,7 @@ const camposInsumo = (i = {}) => [
   ...(i.id ? [] : [{ nombre: 'stock', etiqueta: 'Stock inicial *', tipo: 'number', valor: 0, req: 1 }]),
   { nombre: 'min', etiqueta: 'Mínimo *', tipo: 'number', valor: i.min, req: 1 },
   { nombre: 'max', etiqueta: 'Máximo *', tipo: 'number', valor: i.max, req: 1 },
-  { nombre: 'rendimiento', etiqueta: 'Rendimiento % (de 10 kg, ¿cuánto se aprovecha? 8 kg = 80)', tipo: 'number', valor: i.rendimiento },
+  { nombre: 'merma', etiqueta: 'Merma % (de 10 kg de pollo quedan 6 kg limpios: merma 40)', tipo: 'number', valor: mermaDe(i.rendimiento) },
   { nombre: 'costo', etiqueta: 'Precio por unidad', tipo: 'number', valor: i.costo, opcional: 1 },
   { nombre: 'codigo', etiqueta: 'Código de barras', valor: i.codigo, opcional: 1 },
   { nombre: 'proveedor_id', etiqueta: 'Proveedor', tipo: 'select', valor: i.proveedor_id, opcional: 1, opciones: [['', 'Sin asignar'], ...S.proveedores.map(p => [p.id, p.nombre])] },
@@ -669,6 +674,7 @@ const camposProveedor = (p = {}) => [
   { nombre: 'contacto_nombre', etiqueta: 'Nombre de contacto', valor: p.contacto_nombre, opcional: 1, extra: 'maxlength="80"' },
   { nombre: 'telefono', etiqueta: 'Teléfono', valor: p.telefono, opcional: 1, extra: 'type="tel" inputmode="tel"' },
   { nombre: 'correo', etiqueta: 'Correo', valor: p.correo, opcional: 1, extra: 'inputmode="email"' },
+  { nombre: 'direccion_envio', etiqueta: 'Dirección para enviar folio y factura (correo o domicilio)', valor: p.direccion_envio, opcional: 1, extra: 'maxlength="250"' },
 ];
 const camposUsuario = (u = {}) => [
   { nombre: 'nombre', etiqueta: 'Nombre *', valor: u.nombre, req: 1, extra: 'maxlength="60"' },
@@ -679,7 +685,86 @@ const camposUsuario = (u = {}) => [
   ...(u.id ? [{ nombre: 'activo', etiqueta: 'Activo', tipo: 'check', valor: u.activo }] : []),
 ];
 
+// Captura rápida: el insumo se elige por código (lector USB/Bluetooth: teclea el código y Enter; o cámara) o por nombre,
+// y la cantidad se guarda como conteo (existencia real) con el registro de conteos que ya existe.
+let rapida = null; // { id, cantidad, factor }
+const camaraLista = () => 'BarcodeDetector' in window && window.isSecureContext && !!navigator.mediaDevices?.getUserMedia;
+function buscarInsumo(t) {
+  t = t.trim().toLowerCase();
+  if (!t) return null;
+  const a = activos(), porCodigo = a.find(i => i.codigo && i.codigo.toLowerCase() === t);
+  if (porCodigo) return { i: porCodigo, codigo: true };
+  const exacto = a.find(i => i.nombre.toLowerCase() === t), parecidos = a.filter(i => i.nombre.toLowerCase().includes(t));
+  return exacto ? { i: exacto } : parecidos.length === 1 ? { i: parecidos[0] } : null;
+}
+function capturaRapida() {
+  const i = rapida && insumoPor(rapida.id);
+  return `<section class="tarjeta captura" id="captura">${titulo(`<span style="color:var(--naranja)">${ic('codigo')}</span> Captura rápida`)}
+    <p class="sub">Escanea el código de barras o escribe el nombre y presiona Enter. Cada escaneo del mismo insumo suma 1. Se guarda como conteo: la cantidad reemplaza la existencia.</p>
+    <div class="captura-busca"><input id="cr-buscar" list="cr-lista" placeholder="Código de barras o nombre del insumo" autocomplete="off" aria-label="Código de barras o nombre del insumo">
+      ${camaraLista() ? `<button class="btn borde tinta" data-act="escanearCamara">${ic('codigo')} Cámara</button>` : ''}</div>
+    <datalist id="cr-lista">${activos().map(x => `<option value="${esc(x.nombre)}">`).join('')}</datalist>
+    ${i ? `<div class="captura-sel fila">${foto(i)}<div class="txt"><b>${esc(i.nombre)}</b><small>Existencia en sistema: ${cant(i.stock, i.unidad)}${equivalente(i)}</small></div></div>
+      <div class="captura-cant"><label class="campo">Cantidad contada<input id="cr-cant" type="number" min="0" step="any" inputmode="decimal" value="${esc(rapida.cantidad)}"></label>
+        <label class="campo">En<select id="cr-factor"><option value="1">${esc(i.unidad)}</option>${presDe(i.id).map(p => `<option value="${p.contenido}" ${Number(rapida.factor) === p.contenido ? 'selected' : ''}>${esc(p.nombre)} de ${+p.contenido} ${esc(i.unidad)}</option>`).join('')}</select></label></div>
+      <div class="botones"><button class="btn" data-act="guardarRapida">${ic('guardar')} Guardar conteo</button><button class="btn borde" data-act="cancelarRapida">Cancelar</button></div>` : ''}
+  </section>`;
+}
+function pintarRapida(foco = '#cr-buscar') {
+  const c = $('#captura');
+  if (!c) return;
+  c.outerHTML = capturaRapida();
+  const el = $(foco) || $('#cr-buscar');
+  el.focus(); el.select?.();
+}
+function elegirRapida(texto) {
+  const r = buscarInsumo(texto);
+  if (!r) { avisar('Ningún insumo coincide con ese código o nombre. Revisa el código en la ficha del insumo.'); $('#cr-buscar')?.select(); return; }
+  const cantidad = Number($('#cr-cant')?.value) || 0, factor = $('#cr-factor')?.value || 1;
+  if (rapida?.id === r.i.id && r.codigo) rapida = { ...rapida, cantidad: Math.round((cantidad + 1) * 1000) / 1000, factor }; // escanear otra vez suma 1
+  else rapida = { id: r.i.id, cantidad: r.codigo ? 1 : '', factor: 1 };
+  pintarRapida(r.codigo ? '#cr-buscar' : '#cr-cant');
+}
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  if (e.target.id === 'cr-buscar') { e.preventDefault(); elegirRapida(e.target.value); }
+  else if (e.target.id === 'cr-cant') { e.preventDefault(); e.stopImmediatePropagation(); $('[data-act="guardarRapida"]')?.click(); }
+}, true);
+
 const acciones = {
+  async guardarRapida() {
+    const i = insumoPor(rapida.id), crudo = $('#cr-cant').value;
+    if (crudo === '' || Number(crudo) < 0) throw new Error('Escribe la cantidad contada');
+    const total = Math.round(Number(crudo) * Number($('#cr-factor').value) * 1000) / 1000;
+    await api('/api/conteos', { categoria_id: i.categoria_id, lineas: [{ insumo: i.id, cantidad: String(total) }] });
+    delete draft[`conteo.${i.id}`]; // que la tabla de conteo no lo vuelva a pisar con un valor viejo
+    guardarBorrador();
+    rapida = null;
+    avisar(`Conteo de ${i.nombre}: ${cant(total, i.unidad)}`);
+    await refrescar();
+    $('#cr-buscar')?.focus();
+  },
+  cancelarRapida() { rapida = null; pintarRapida(); },
+  // Cámara: solo donde el navegador trae lector de códigos (Chrome en Android o Mac) y la página es segura (HTTPS o 127.0.0.1).
+  async escanearCamara() {
+    const lector = new BarcodeDetector();
+    const video = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }).catch(() => { throw new Error('No se pudo usar la cámara. Revisa el permiso del navegador.'); });
+    const d = $('#dialogo');
+    d.innerHTML = '<h2>Apunta al código de barras</h2><video playsinline muted style="width:100%;border-radius:12px;background:#000"></video><button class="btn borde" type="button" id="cam-cerrar" style="margin-top:10px">Cancelar</button>';
+    const v = d.querySelector('video');
+    v.srcObject = video;
+    let vivo = true;
+    const fin = () => { if (!vivo) return; vivo = false; video.getTracks().forEach(t => t.stop()); if (d.open) d.close(); };
+    d.querySelector('#cam-cerrar').onclick = fin;
+    d.addEventListener('close', fin, { once: true });
+    d.showModal();
+    await v.play();
+    while (vivo) {
+      const [c] = await lector.detect(v).catch(() => []);
+      if (c) { fin(); elegirRapida(c.rawValue); break; }
+      await new Promise(r => setTimeout(r, 200));
+    }
+  },
   async guardarConteo({ cat }) {
     const id = Number(cat);
     const items = activos().filter(i => i.categoria_id === id);
@@ -691,23 +776,10 @@ const acciones = {
     avisar(tocados.length ? `Conteo guardado: ${tocados.length} insumos actualizados` : 'Conteo registrado sin cambios');
     await refrescar();
   },
-  // shortcut: lectores USB/Bluetooth teclean el código aquí; sin cámara del teléfono porque requiere HTTPS. Agregar BarcodeDetector al servir con HTTPS.
-  escanear() {
-    formulario({
-      titulo: 'Escanear insumo', enviar: 'Buscar',
-      campos: [{ nombre: 'codigo', etiqueta: 'Código de barras', req: 1, extra: 'autofocus autocomplete="off"' }],
-      alEnviar: async ({ codigo }) => {
-        const i = activos().find(x => x.codigo === codigo.trim());
-        if (!i) throw new Error('Ningún insumo tiene ese código');
-        location.hash = `#/conteo/${i.categoria_id}`;
-        setTimeout(() => { const el = $(`#c-${i.id}`); el?.focus(); el?.select(); }, 120);
-      },
-    });
-  },
-  nuevoInsumo: () => formulario({ titulo: 'Agregar insumo', enviar: 'Guardar', exito: 'Insumo agregado', campos: camposInsumo(), alEnviar: d => api('/api/insumos', d) }),
+  nuevoInsumo: () => formulario({ titulo: 'Agregar insumo', enviar: 'Guardar', exito: 'Insumo agregado', campos: camposInsumo(), alEnviar: d => api('/api/insumos', { ...d, rendimiento: rendDe(d.merma) }) }),
   editarInsumo({ id }) {
     const i = insumoPor(Number(id));
-    formulario({ titulo: 'Editar insumo', enviar: 'Guardar', exito: 'Insumo actualizado', campos: camposInsumo(i), alEnviar: d => api(`/api/insumos/${i.id}`, d, 'PUT') });
+    formulario({ titulo: 'Editar insumo', enviar: 'Guardar', exito: 'Insumo actualizado', campos: camposInsumo(i), alEnviar: d => api(`/api/insumos/${i.id}`, { ...d, rendimiento: rendDe(d.merma) }, 'PUT') });
   },
   nuevoProveedor: () => formulario({ titulo: 'Agregar proveedor', enviar: 'Guardar', exito: 'Proveedor agregado', campos: camposProveedor(), alEnviar: d => api('/api/proveedores', d) }),
   editarProveedor({ id }) {

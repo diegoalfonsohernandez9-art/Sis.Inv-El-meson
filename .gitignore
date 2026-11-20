@@ -5,3 +5,4 @@ node_modules/
 pruebas-navegador/*/
 .env
 .env.*
+procesos-java/reportes/

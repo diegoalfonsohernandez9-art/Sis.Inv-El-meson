@@ -95,10 +95,11 @@ test('proveedor con datos fiscales: formato validado y permisos', async () => {
   assert.equal((await llamar('POST', '/api/proveedores', { ...base_, rfc: 'MAL' }, leo)).status, 400);
   assert.equal((await llamar('POST', '/api/proveedores', { ...base_, cp: '123' }, leo)).status, 400);
   assert.equal((await llamar('POST', '/api/proveedores', base_, carlos)).status, 403);
-  const { id } = await ok('POST', '/api/proveedores', { ...base_, razon_social: 'Carnes del Norte SA de CV', rfc: 'cno010101ab1', cp: '64000', regimen_fiscal: '601', domicilio_fiscal: 'Calle 1', telefono: '8112345678', correo: 'fact@carnes.example', contacto_nombre: 'Ana' }, leo);
+  const { id } = await ok('POST', '/api/proveedores', { ...base_, razon_social: 'Carnes del Norte SA de CV', rfc: 'cno010101ab1', cp: '64000', regimen_fiscal: '601', domicilio_fiscal: 'Calle 1', telefono: '8112345678', correo: 'fact@carnes.example', contacto_nombre: 'Ana', direccion_envio: 'facturas@carnes.example' }, leo);
   const p = (await estado(leo)).proveedores.find(x => x.id === id);
   assert.equal(p.rfc, 'CNO010101AB1');
   assert.equal(p.cp, '64000');
+  assert.equal(p.direccion_envio, 'facturas@carnes.example');
 });
 
 test('caso 20 kg pedidos, llegan 10: parcial, faltante, entrada única y entrega posterior', async () => {
@@ -221,6 +222,8 @@ test('remisión: borrador, versiones, devolución sin stock, firmas y envío', a
   const sub = await subir(`/api/documentos?tipo=remision_corregida&remision=${rem.id}&nombre=corregida.png`, PNG, portal);
   assert.equal(sub.status, 200);
   assert.equal((await subir(`/api/documentos?tipo=factura&remision=${rem.id}`, PNG, portal)).status, 403);
+  assert.equal((await subir(`/api/documentos?tipo=factura_corregida&remision=${rem.id}&nombre=factura.png`, PNG, portal)).status, 200, 'el proveedor sube la factura corregida');
+  assert.ok((await estado(leo)).eventos.some(ev => ev.titulo === 'Factura corregida recibida'), 'llega un aviso a El Mesón');
 
   // Nueva versión: la original se conserva con sus firmas y la nueva pide firmas otra vez.
   const v2 = await ok('POST', `/api/remisiones/${rem.id}/version`, { motivo: 'Proveedor corrigió el folio' }, carlos);
@@ -228,6 +231,7 @@ test('remisión: borrador, versiones, devolución sin stock, firmas y envío', a
   e = await estado(leo);
   const orig = e.remisiones.find(z => z.id === rem.id), nueva = e.remisiones.find(z => z.id === v2.id);
   assert.equal(orig.estado, 'reemplazada');
+  assert.equal((await subir(`/api/documentos?tipo=factura_corregida&remision=${rem.id}`, PNG, portal)).status, 403, 'ya no está devuelta: el proveedor no sube nada');
   assert.equal(orig.obs_resueltas, 1);
   assert.equal(orig.firmas.length, 2);
   assert.equal(orig.devolucion.motivo, 'Faltan 10 kg');
@@ -336,6 +340,10 @@ test('receta: consumo, merma prevista contra adicional, costo y sin duplicar', a
   r = (await estado(leo)).recetas.find(x => x.id === id);
   assert.equal(r.costo, 120);
   assert.equal(r.costo_porcion, 60);
+  assert.deepEqual([r.margen, r.margen_pct], [null, null], 'sin precio de venta no hay margen');
+  await ok('PUT', `/api/recetas/${id}`, { nombre: 'Salsa', porciones: 2, precio_venta: 150, lineas: [{ insumo: queso.id, neta: 0.9, merma: 10 }, { insumo: leche.id, neta: 0.5 }] }, leo);
+  r = (await estado(leo)).recetas.find(x => x.id === id);
+  assert.deepEqual([r.precio_venta, r.margen, r.margen_pct], [150, 90, 60]);
 
   // Producir 4 porciones = doble de la receta.
   const clave = 'clave-produccion-1';
@@ -441,4 +449,46 @@ test('presentaciones: pedido en cajas se guarda en kg, recepción suma kg, solo 
   ped = (await estado(leo)).pedidos.find(p => p.id === id);
   assert.equal(ped.lineas[0].factor, 5);
   assert.equal((await estado(leo)).presentaciones.find(p => p.id === bolsa).activo, 0, 'se conserva como no vigente');
+});
+
+test('receta dentro de receta: la salsa produce su insumo, rinde para N platillos, cuesta lo que sus ingredientes y no se cicla', async () => {
+  let e = await estado(leo);
+  const jito = e.insumos.find(i => i.nombre === 'Jitomate'), cebolla = e.insumos.find(i => i.nombre === 'Cebolla'), tortilla = e.insumos.find(i => i.nombre === 'Tortillas de maíz');
+  const ins = i => ({ nombre: i.nombre, categoria_id: i.categoria_id, unidad: i.unidad, min: i.min, max: i.max, codigo: i.codigo, proveedor_id: i.proveedor_id, activo: 1 });
+  await ok('PUT', `/api/insumos/${jito.id}`, { ...ins(jito), costo: 20 }, leo);
+  await ok('PUT', `/api/insumos/${cebolla.id}`, { ...ins(cebolla), costo: 10 }, leo);
+  await ok('POST', '/api/conteos', { categoria_id: jito.categoria_id, lineas: [{ insumo: jito.id, cantidad: '10' }, { insumo: cebolla.id, cantidad: '10' }] }, leo);
+  await ok('POST', '/api/insumos', { nombre: 'Salsa roja', categoria_id: jito.categoria_id, unidad: 'L', stock: 0, min: 1, max: 5 }, leo);
+  const idDe = async n => (await estado(leo)).insumos.find(i => i.nombre === n).id;
+  const salsaIns = await idDe('Salsa roja');
+
+  // Salsa: 1 kg de jitomate + 0.5 kg de cebolla rinden 2 L → $25 la tanda, $12.5 por litro.
+  const salsa = { nombre: 'Salsa roja', porciones: 2, produce_insumo_id: salsaIns, lineas: [{ insumo: jito.id, neta: 1, merma: 0 }, { insumo: cebolla.id, neta: 0.5, merma: 0 }] };
+  const { id: salsaId } = await ok('POST', '/api/recetas', salsa, leo);
+  assert.equal((await llamar('POST', '/api/recetas', { ...salsa, nombre: 'Otra salsa' }, leo)).status, 409, 'un insumo lo produce una sola receta');
+  assert.equal((await llamar('PUT', `/api/recetas/${salsaId}`, { ...salsa, lineas: [...salsa.lineas, { insumo: salsaIns, neta: 0.1 }] }, leo)).status, 400, 'no puede usar lo que produce');
+
+  // Enchiladas: 0.1 L de salsa por porción, 4 porciones.
+  const { id: enchId } = await ok('POST', '/api/recetas', { nombre: 'Enchiladas', porciones: 4, precio_venta: 60, lineas: [{ insumo: salsaIns, neta: 0.4, merma: 0 }] }, leo);
+  // Ciclo indirecto: la salsa no puede llevar un insumo que produce una receta que usa la salsa.
+  await ok('POST', '/api/insumos', { nombre: 'Polvo de enchilada', categoria_id: jito.categoria_id, unidad: 'kg', stock: 0, min: 0, max: 1 }, leo);
+  const polvoIns = await idDe('Polvo de enchilada');
+  await ok('POST', '/api/recetas', { nombre: 'Polvo', porciones: 1, produce_insumo_id: polvoIns, lineas: [{ insumo: salsaIns, neta: 0.1 }] }, leo);
+  assert.equal((await llamar('PUT', `/api/recetas/${salsaId}`, { ...salsa, lineas: [...salsa.lineas, { insumo: polvoIns, neta: 0.1 }] }, leo)).status, 400, 'ciclo indirecto');
+
+  e = await estado(leo);
+  const rs = e.recetas.find(r => r.id === salsaId), re = e.recetas.find(r => r.id === enchId);
+  assert.deepEqual([rs.costo, rs.costo_porcion, rs.produce], [25, 12.5, 'Salsa roja']);
+  assert.equal(rs.usos.find(u => u.receta === 'Enchiladas').por_tanda, 20, '2 L entre 0.1 L por porción');
+  assert.deepEqual([re.costo_porcion, re.margen], [1.25, 58.75], 'el platillo hereda el costo de la salsa');
+  assert.equal(re.alcanza, 0, 'sin salsa hecha no alcanza');
+
+  // Producir la salsa suma 2 L a su existencia; producir enchiladas la descuenta.
+  const p = await ok('POST', `/api/recetas/${salsaId}/produccion`, { porciones: 2 }, juan);
+  assert.equal(await stock('Salsa roja'), 2);
+  assert.equal(await stock('Jitomate'), 9);
+  assert.equal((await movs('produccion_entrada', `produccion:${p.id}`)).length, 1);
+  await ok('POST', `/api/recetas/${enchId}/produccion`, { porciones: 4 }, juan);
+  assert.equal(await stock('Salsa roja'), 1.6);
+  assert.equal((await estado(leo)).recetas.find(r => r.id === enchId).alcanza, 16);
 });

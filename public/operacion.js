@@ -9,12 +9,19 @@ const REM_ESTADO = { borrador: ['Borrador', 'neutro', 'lapiz'], emitida: ['Emiti
 const FIRMA_ESTADO = { firmada: ['Firmada', '', 'ok'], pendiente: ['Falta firmar', 'neutro', 'reloj'], pendiente_con_motivo: ['Pendiente de firma (con motivo)', 'bajo', 'alerta'] };
 const ENVIO_ESTADO = { sin_enviar: ['Sin enviar', 'neutro', 'reloj'], publicada_portal: ['Publicada en portal', '', 'ok'], compartida_manual: ['Compartida a mano, sin confirmar', 'bajo', 'alerta'], error: ['Error al enviar', 'critico', 'x'] };
 const chipDe = ([t, c, i]) => `<span class="chip ${c}">${ic(i)}${esc(t)}</span>`;
-const TIPO_DOC = { factura: 'Factura', xml: 'XML', pdf: 'PDF', nota_entrega: 'Nota de entrega', foto: 'Fotografía', captura: 'Captura', evidencia: 'Evidencia', comprobante_devolucion: 'Comprobante de devolución', remision_corregida: 'Remisión corregida' };
+const TIPO_DOC = { factura: 'Factura', xml: 'XML', pdf: 'PDF', nota_entrega: 'Nota de entrega', foto: 'Fotografía', captura: 'Captura', evidencia: 'Evidencia', comprobante_devolucion: 'Comprobante de devolución', remision_corregida: 'Remisión corregida', factura_corregida: 'Factura corregida' };
 const TIPO_INC = { faltante: 'Faltante', rechazo: 'Rechazo', dano: 'Daño', observacion: 'Observación' };
 const CHECKLIST = [['proveedor', 'Proveedor correcto'], ['pedido', 'Corresponde al pedido'], ['productos', 'Productos correctos'], ['cantidades', 'Cantidades correctas'], ['calidad', 'Calidad aceptable'],
   ['precios', 'Precios correctos'], ['importes', 'Importes correctos'], ['documento', 'Factura o nota presente'], ['datos_fiscales', 'Datos fiscales coinciden'], ['folio', 'Folio correcto'], ['adjuntos', 'Archivos adjuntos']];
+// Lo que la revisión marcó con observación, como borrador del aviso al proveedor (el checklist interno no se le comparte).
+const notasRevision = rem => {
+  const r = S.recepciones.find(x => x.id === rem.recepcion_id);
+  if (!r) return '';
+  const obs = CHECKLIST.filter(([k]) => r.checklist?.[k] === 'observacion').map(([, t]) => `Revisar: ${t.toLowerCase()}.`);
+  return [...obs, r.checklist_notas || ''].filter(Boolean).join('\n').slice(0, 500);
+};
 const REGIMENES = [['', 'Sin capturar'], ['601', '601 General de Ley Personas Morales'], ['603', '603 Personas Morales con Fines no Lucrativos'], ['606', '606 Arrendamiento'], ['612', '612 Personas Físicas con Actividades Empresariales y Profesionales'], ['616', '616 Sin obligaciones fiscales'], ['620', '620 Sociedades Cooperativas de Producción'], ['621', '621 Incorporación Fiscal'], ['622', '622 Actividades Agrícolas, Ganaderas, Silvícolas y Pesqueras'], ['625', '625 Plataformas Tecnológicas'], ['626', '626 Régimen Simplificado de Confianza']];
-const FUENTE = { receta: 'Merma de la receta', rendimiento: 'Rendimiento del insumo', sin_dato: 'Sin rendimiento ni merma' };
+const FUENTE = { receta: 'Merma de la receta', rendimiento: 'Merma del insumo', sin_dato: 'Sin merma capturada' };
 
 const clave = () => [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, '0')).join('');
 const dinero = n => (n === null || n === undefined ? 'Sin dato' : new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n));
@@ -228,7 +235,7 @@ Object.assign(rutas, {
         ${incs.map(i => `<div class="fila"><span class="burbuja ${i.tipo === 'observacion' ? '' : 'rojo'}">${ic('alerta')}</span><div class="txt"><b>${TIPO_INC[i.tipo]}: ${esc(i.insumo)}${i.cantidad ? ` ${+i.cantidad} ${esc(i.unidad)}` : ''}</b>
           <small>${esc(i.motivo || i.nota || '')} · ${esc(i.usuario)} · ${i.estado === 'abierta' ? 'Abierta' : `Cerrada: ${esc(i.cierre_nota || '')}`}</small></div></div>`).join('') || '<p class="vacio">Sin incidencias.</p>'}
       </section>
-      <section class="tarjeta"><div class="titulo"><h2>Evidencias y documentos</h2><button class="ver" data-act="adjuntar" data-recepcion="${r.id}">${ic('mas')} Adjuntar</button></div>${listaDocs(docs)}</section>
+      <section class="tarjeta"><div class="titulo"><h2>Evidencias y documentos</h2><span><button class="ver" data-act="adjuntar" data-recepcion="${r.id}" data-tipo="factura">${ic('mas')} Factura</button> <button class="ver" data-act="adjuntar" data-recepcion="${r.id}">${ic('mas')} Adjuntar</button></span></div>${listaDocs(docs)}</section>
       <section class="tarjeta">${titulo('Revisión de documentos')}
         <p class="nota-info">${ic('escudo')} <span><b>Revisión interna, no es validación fiscal.</b> La validación oficial del CFDI ante el SAT no está conectada. Para activarla se necesita un servicio de validación (PAC o SAT) y sus credenciales.</span></p>
         <button class="btn borde tinta" data-act="marcarChecklist" data-id="${r.id}">${ic('ok')} Marcar sin respuesta como Bien</button>
@@ -288,7 +295,7 @@ Object.assign(rutas, {
         ${abierta ? `<p class="sub">Antes de firmar, revisen el resumen de arriba.</p>` : ''}
         <div class="firmas">${tarjetaFirma('entrega', 'Quien entrega')}${tarjetaFirma('recibe', 'Quien recibe')}</div></section>`}
       ${abierta ? `<section class="tarjeta">${titulo('Enviar')}
-        <p class="sub"><b>Destinatarios:</b> ${esc(prov.nombre)}${prov.contacto_nombre ? ` (${esc(prov.contacto_nombre)})` : ''}${digitos ? ` · ${esc(digitos)}` : ''}${correo ? ` · ${esc(correo)}` : ''}<br><b>Responsable interno:</b> ${esc(S.responsables.join(', ') || 'Sin responsable')}</p>
+        <p class="sub"><b>Destinatarios:</b> ${esc(prov.nombre)}${prov.contacto_nombre ? ` (${esc(prov.contacto_nombre)})` : ''}${digitos ? ` · ${esc(digitos)}` : ''}${correo ? ` · ${esc(correo)}` : ''}${prov.direccion_envio ? `<br><b>Enviar folio y factura a:</b> ${esc(prov.direccion_envio)}` : ''}<br><b>Responsable interno:</b> ${esc(S.responsables.join(', ') || 'Sin responsable')}</p>
         <p class="nota-info">${ic('alerta')} <span>El envío automático por correo o WhatsApp no está conectado. Al usarlos se abre tu aplicación con el mensaje; adjunta el PDF descargado. Se registra como compartida a mano, sin confirmación de entrega.</span></p>
         <div class="pila">
           ${S.con_portal.includes(r.proveedor_id) ? `<button class="btn" data-act="enviar" data-id="${r.id}" data-canal="portal">${ic('camion')} Publicar en el portal del proveedor</button>` : `<p class="sub">Este proveedor no tiene usuario en el portal.</p>`}
@@ -320,7 +327,7 @@ Object.assign(rutas, {
     const dato = (t, v) => `<div><dt>${t}</dt><dd>${v ? esc(v) : '<span class="sin">Sin capturar</span>'}</dd></div>`;
     return `<main class="contenido sin-hero">
       <section class="tarjeta"><div class="encabezado"><a href="#/proveedores" aria-label="Volver" class="volver">${ic('atras')}</a><h2>${esc(p.nombre)}</h2>${contacto(p)}</div>
-        <dl class="datos">${dato('Contacto', p.contacto_nombre)}${dato('Teléfono', p.telefono)}${dato('Correo', p.correo)}</dl>
+        <dl class="datos">${dato('Contacto', p.contacto_nombre)}${dato('Teléfono', p.telefono)}${dato('Correo', p.correo)}${dato('Enviar folio y factura a', p.direccion_envio)}</dl>
         ${esAdmin() ? `<div class="botones"><button class="btn borde tinta" data-act="editarProveedor" data-id="${p.id}">${ic('lapiz')} Editar</button><a class="btn" href="#/nuevo-pedido">${ic('mas')} Nuevo pedido</a></div>` : ''}</section>
       <section class="tarjeta">${titulo('Datos fiscales')}<dl class="datos">${dato('Razón social', p.razon_social)}${dato('RFC', p.rfc)}${dato('Domicilio fiscal', p.domicilio_fiscal)}${dato('Código postal', p.cp)}${dato('Régimen fiscal', REGIMENES.find(r => r[0] === p.regimen_fiscal)?.[1] || p.regimen_fiscal)}</dl>
         <p class="sub">Capturados por El Mesón. No se validan contra el SAT.</p></section>
@@ -340,8 +347,8 @@ Object.assign(rutas, {
     const usan = S.recetas.filter(r => r.lineas.some(l => l.insumo_id === i.id));
     const movs = S.movimientos.filter(m => m.insumo_id === i.id);
     return `<main class="contenido sin-hero"><section class="tarjeta"><div class="encabezado"><a href="#/insumos" aria-label="Volver" class="volver">${ic('atras')}</a><h2>${esc(i.nombre)}</h2>${chip(estadoDe(i.stock, i.min))}</div>
-        ${nums([['Existencia', cant(i.stock, i.unidad) + equivalente(i)], ['Rendimiento', i.rendimiento === null ? 'Sin dato' : `${+i.rendimiento} %`], ['Aprovechable', i.aprovechable === null ? 'Sin dato' : cant(i.aprovechable, i.unidad)]])}
-        ${i.rendimiento === null ? '<p class="sub">Captura el rendimiento para calcular cuánto se aprovecha.</p>' : ''}
+        ${nums([['Existencia', cant(i.stock, i.unidad) + equivalente(i)], ['Merma', i.rendimiento === null ? 'Sin dato' : `${mermaDe(i.rendimiento)} %`], ['Aprovechable', i.aprovechable === null ? 'Sin dato' : cant(i.aprovechable, i.unidad)]])}
+        ${i.rendimiento === null ? '<p class="sub">Captura la merma para calcular cuánto se aprovecha.</p>' : ''}
         <dl class="datos"><div><dt>Precio</dt><dd>${i.costo === null ? '<span class="sin">Sin capturar</span>' : `${dinero(i.costo)} por ${esc(i.unidad)}`}</dd></div></dl>
         <div class="botones"><button class="btn borde" data-act="registrarMerma" data-id="${i.id}">${ic('alerta')} Registrar merma</button>${esAdmin() ? `<button class="btn borde tinta" data-act="editarInsumo" data-id="${i.id}">${ic('lapiz')} Editar</button>` : ''}</div></section>
       <section class="tarjeta"><div class="titulo"><h2>Presentaciones de compra</h2>${esAdmin() ? `<button class="ver" data-act="agregarPresentacion" data-id="${i.id}">${ic('mas')} Agregar</button>` : ''}</div>
@@ -357,13 +364,13 @@ Object.assign(rutas, {
 
   rendimientos() {
     const fila = i => `<tr><td><b>${esc(i.nombre)}</b><br><small class="minmax">${esc(i.unidad)}</small></td>
-      <td><input class="cant" type="number" min="1" max="100" step="any" inputmode="decimal" aria-label="Rendimiento de ${esc(i.nombre)}" data-draft="ren.${i.id}.r" value="${esc(val(`ren.${i.id}.r`, i.rendimiento))}"></td>
+      <td><input class="cant" type="number" min="0" max="99" step="any" inputmode="decimal" aria-label="Merma de ${esc(i.nombre)}" data-draft="ren.${i.id}.m" value="${esc(val(`ren.${i.id}.m`, mermaDe(i.rendimiento)))}"></td>
       <td><input class="cant" type="number" min="0" step="any" inputmode="decimal" aria-label="Precio de ${esc(i.nombre)}" data-draft="ren.${i.id}.c" value="${esc(val(`ren.${i.id}.c`, i.costo))}"></td></tr>`;
-    return `<main class="contenido sin-hero"><section class="tarjeta"><div class="encabezado"><a href="#/inventario" aria-label="Volver" class="volver">${ic('atras')}</a><h2>Rendimientos y precios</h2></div>
-      <p class="sub">Rendimiento: de cada 100 que compras, cuánto se aprovecha. Si 10 kg dejan 8 kg limpios, escribe 80. Lo que dejes vacío queda sin capturar.</p></section>
+    return `<main class="contenido sin-hero"><section class="tarjeta"><div class="encabezado"><a href="#/inventario" aria-label="Volver" class="volver">${ic('atras')}</a><h2>Merma y precios</h2></div>
+      <p class="sub">Merma: de cada 100 que compras, cuánto se pierde al limpiar. Si 10 kg de pollo dejan 6 kg limpios, escribe 40. Lo que dejes vacío queda sin capturar.</p></section>
       ${S.categorias.map(c => {
         const de = activos().filter(i => i.categoria_id === c.id);
-        return de.length ? `<section class="tarjeta">${titulo(esc(c.nombre))}<table><thead><tr><th>Insumo</th><th>Rinde %</th><th>Precio $</th></tr></thead><tbody>${de.map(fila).join('')}</tbody></table></section>` : '';
+        return de.length ? `<section class="tarjeta">${titulo(esc(c.nombre))}<table><thead><tr><th>Insumo</th><th>Merma %</th><th>Precio $</th></tr></thead><tbody>${de.map(fila).join('')}</tbody></table></section>` : '';
       }).join('')}
       <button class="btn" data-act="guardarRendimientos">${ic('guardar')} Guardar</button></main>`;
   },
@@ -371,22 +378,28 @@ Object.assign(rutas, {
   recetas() {
     return `${hero('Recetas', 'Consumo, merma prevista y costo de cada platillo.')}<main class="contenido">
       ${esAdmin() ? `<a class="btn" href="#/receta-editar">${ic('mas')} Agregar receta</a>` : ''}
-      <section class="tarjeta">${titulo('Recetas')}${S.recetas.map(r => `<a class="fila" href="#/receta/${r.id}"><div class="txt"><b>${esc(r.nombre)}</b><small>${+r.porciones} porciones · Costo ${r.costo_porcion === null ? 'sin dato' : `${dinero(r.costo_porcion)} por porción`} · Alcanza para ${r.alcanza}</small></div><span class="chev">${ic('chev')}</span></a>`).join('') || `<p class="vacio">Aún no hay recetas registradas.${esAdmin() ? ' Agrega la primera con sus insumos y merma.' : ' Administración las da de alta.'}</p>`}</section></main>`;
+      <section class="tarjeta">${titulo('Recetas')}${S.recetas.map(r => `<a class="fila" href="#/receta/${r.id}"><div class="txt"><b>${esc(r.nombre)}</b><small>${r.produce ? `Sub-receta: rinde ${+r.porciones} ${esc(r.produce_unidad)} de ${esc(r.produce)}` : `${+r.porciones} porciones`} · Costo ${r.costo_porcion === null ? 'sin dato' : `${dinero(r.costo_porcion)} por ${r.produce ? esc(r.produce_unidad) : 'porción'}`}${r.margen_pct === null ? '' : ` · Margen ${r.margen_pct} %`} · Alcanza para ${r.alcanza}</small></div><span class="chev">${ic('chev')}</span></a>`).join('') || `<p class="vacio">Aún no hay recetas registradas.${esAdmin() ? ' Agrega la primera con sus insumos y merma.' : ' Administración las da de alta.'}</p>`}</section></main>`;
   },
 
   receta(id) {
     const r = S.recetas.find(x => x.id === Number(id));
     if (!r) return noEncontrado('Receta');
+    const colorM = r.margen === null ? '' : r.margen < 0 ? 'rojo-t' : 'verde-t';
     return `<main class="contenido sin-hero"><section class="tarjeta"><div class="encabezado"><a href="#/recetas" aria-label="Volver" class="volver">${ic('atras')}</a><h2>${esc(r.nombre)}</h2></div>
-      ${nums([['Porciones', +r.porciones], ['Alcanza para', r.alcanza], ['Costo total', dinero(r.costo)], ['Por porción', dinero(r.costo_porcion)]])}
+      ${r.produce ? `<p class="sub">Sub-receta: al producirla se suma a la existencia de <a class="enlace" href="#/insumo/${r.produce_insumo_id}">${esc(r.produce)}</a>, y los platillos la descuentan de ahí.</p>` : ''}
+      ${nums([['Rinde', `${+r.porciones} ${r.produce ? esc(r.produce_unidad) : 'porciones'}`], ['Alcanza para', `${r.alcanza} ${r.produce ? esc(r.produce_unidad) : ''}`], ['Costo total', dinero(r.costo)], [`Costo por ${r.produce ? esc(r.produce_unidad) : 'porción'}`, dinero(r.costo_porcion)]])}
+      ${r.produce ? '' : nums([['Precio de venta', dinero(r.precio_venta)], ['Margen por porción', dinero(r.margen), colorM], ['Margen', r.margen_pct === null ? 'Sin dato' : `${r.margen_pct} %`, colorM]])}
+      ${!r.produce && r.precio_venta === null ? '<p class="sub">Captura el precio de venta para calcular el margen.</p>' : ''}
       ${r.sin_precio.length ? `<p class="sub">Falta el precio de: ${esc(r.sin_precio.join(', '))}. Sin él no se calcula el costo.</p>` : ''}
       ${r.notas ? `<p class="mini-nota">${esc(r.notas)}</p>` : ''}
       <div class="botones"><button class="btn" data-act="producir" data-id="${r.id}">${ic('ok')} Registrar producción</button>${esAdmin() ? `<a class="btn borde tinta" href="#/receta-editar/${r.id}">${ic('lapiz')} Editar</a>` : ''}</div></section>
+      ${r.produce ? `<section class="tarjeta">${titulo('¿Para cuántos platillos sale?')}
+        ${r.usos.map(u => `<div class="fila"><div class="txt"><a class="enlace" href="#/receta/${u.receta_id}"><b>${esc(u.receta)}</b></a><small>Usa ${+u.por_porcion} ${esc(r.produce_unidad)} por porción</small></div><b>Una tanda: ${u.por_tanda} porciones</b></div>`).join('') || `<p class="vacio">Ningún platillo usa ${esc(r.produce)} todavía. Agrégalo como insumo en la receta del platillo.</p>`}</section>` : ''}
       <section class="tarjeta">${titulo('Insumos')}
-        <p class="nota-info">${ic('alerta')} <span>Si la receta define merma, se usa esa y no el rendimiento del insumo: nunca se descuentan las dos.</span></p>
+        <p class="nota-info">${ic('alerta')} <span>Si la receta define merma, se usa esa y no la merma del insumo: nunca se descuentan las dos.</span></p>
         ${r.lineas.map(l => `<div class="prod"><a class="enlace" href="#/insumo/${l.insumo_id}"><b>${esc(l.nombre)}</b></a> <small>(${esc(l.unidad)})</small>
           ${nums([['Neto', +l.neta], ['Merma prevista', +l.merma_prevista], ['A descontar', +l.bruta, 'verde-t'], ['Existencia', +l.stock]])}
-          <p class="mini-nota">${FUENTE[l.fuente]}${l.fuente === 'receta' ? ` (${+l.merma} %)` : l.fuente === 'rendimiento' ? ` (rinde ${+l.rendimiento} %)` : ': se usa la cantidad neta'}</p></div>`).join('')}</section></main>`;
+          <p class="mini-nota">${FUENTE[l.fuente]}${l.fuente === 'receta' ? ` (${+l.merma} %)` : l.fuente === 'rendimiento' ? ` (${mermaDe(l.rendimiento)} %)` : ': se usa la cantidad neta'}</p></div>`).join('')}</section></main>`;
   },
 
   recetaEditar(id) {
@@ -394,8 +407,11 @@ Object.assign(rutas, {
     if (!r) return noEncontrado('Receta');
     return `<main class="contenido sin-hero"><section class="tarjeta">${titulo(id ? 'Editar receta' : 'Agregar receta')}
       <label class="campo">Nombre *<input id="re-nombre" maxlength="80" value="${esc(r.nombre)}"></label>
-      <label class="campo">Rinde cuántas porciones *<input id="re-porciones" type="number" min="0" step="any" inputmode="decimal" value="${esc(r.porciones)}"></label>
-      <p class="sub">Cantidad neta: lo que llega al platillo. Merma %: déjala vacía para usar el rendimiento del insumo.</p>
+      <label class="campo">¿Es una sub-receta? (la salsa, un fondo, una masa)<select id="re-produce"><option value="">No, es un platillo</option>${activos().map(i => `<option value="${i.id}" ${r.produce_insumo_id === i.id ? 'selected' : ''}>Sí, produce ${esc(i.nombre)} (${esc(i.unidad)})</option>`).join('')}</select></label>
+      <p class="sub">Para una sub-receta, primero da de alta su insumo en Inventario (por ejemplo "Salsa verde", en L). Así se lleva su existencia y los platillos la usan como ingrediente.</p>
+      <label class="campo">Rinde cuánto * (porciones; en una sub-receta, en la unidad de su insumo: 2 L)<input id="re-porciones" type="number" min="0" step="any" inputmode="decimal" value="${esc(r.porciones)}"></label>
+      <label class="campo">Precio de venta por porción (solo platillos)<input id="re-precio" type="number" min="0" step="any" inputmode="decimal" value="${esc(r.precio_venta)}"></label>
+      <p class="sub">Cantidad neta: lo que llega al platillo. Merma %: déjala vacía para usar la merma del insumo.</p>
       ${editorFilas('re', [{ n: 'insumo', t: 'Insumo', opciones: activos().map(i => [i.id, `${i.nombre} (${i.unidad})`]) }, { n: 'neta', t: 'Cantidad neta', num: 1 }, { n: 'merma', t: 'Merma %', num: 1 }], (r.lineas || []).map(l => ({ insumo: l.insumo_id, neta: l.neta, merma: l.merma })))}
       <details><summary>Notas</summary><label class="campo">Notas<textarea id="re-notas" rows="2" maxlength="1000">${esc(r.notas)}</textarea></label></details>
       <button class="btn" data-act="guardarReceta" data-id="${id || ''}">${ic('guardar')} Guardar receta</button></section></main>`;
@@ -412,12 +428,12 @@ Object.assign(rutas, {
     return bandaProveedor(`${r.folio}, versión ${r.version}`) + `<main class="contenido">
       ${docRemision(r)}
       <a class="btn borde" href="/api/remisiones/${r.id}/pdf" download>${ic('guardar')} Descargar PDF</a>
-      ${r.estado === 'devuelta' ? `<button class="btn" data-act="provCorregida" data-id="${r.id}">${ic('hoja')} Subir remisión corregida</button>` : ''}
+      ${r.estado === 'devuelta' ? `<div class="botones"><button class="btn" data-act="provCorregida" data-id="${r.id}">${ic('hoja')} Subir remisión corregida</button><button class="btn borde tinta" data-act="provCorregida" data-id="${r.id}" data-tipo="factura_corregida">${ic('hoja')} Subir factura corregida</button></div>` : ''}
       <section class="tarjeta">${titulo('Evidencias')}${listaDocs(r.documentos)}</section></main>`;
   },
 });
 
-const NOMBRE_MOV = { conteo: 'Conteo', recepcion: 'Entrada por recepción', devolucion: 'Devolución al proveedor', correccion_recepcion: 'Corrección de recepción',produccion: 'Consumo por producción', merma_adicional: 'Merma adicional' };
+const NOMBRE_MOV = { conteo: 'Conteo', recepcion: 'Entrada por recepción', devolucion: 'Devolución al proveedor', correccion_recepcion: 'Corrección de recepción',produccion: 'Consumo por producción', produccion_entrada: 'Entrada por producción (sub-receta)', merma_adicional: 'Merma adicional' };
 
 function editorFilas(id, cols, filas = []) {
   const celda = (c, v = '') => (c.opciones
@@ -516,11 +532,11 @@ Object.assign(acciones, {
       },
     });
   },
-  adjuntar({ recepcion, remision, proveedor, pedido }) {
+  adjuntar({ recepcion, remision, proveedor, pedido, tipo = 'evidencia' }) {
     const params = { ...(recepcion && { recepcion }), ...(remision && { remision }), ...(proveedor && { proveedor }), ...(pedido && { pedido }) };
     formulario({
-      titulo: 'Adjuntar archivo', enviar: 'Subir', exito: 'Archivo guardado',
-      campos: [{ nombre: 'tipo', etiqueta: 'Tipo', tipo: 'select', valor: 'evidencia', opciones: Object.entries(TIPO_DOC) }, campoArchivo, { nombre: 'folio', etiqueta: 'Folio del documento', opcional: 1 }],
+      titulo: tipo === 'factura' ? 'Subir factura' : 'Adjuntar archivo', enviar: 'Subir', exito: 'Archivo guardado',
+      campos: [{ nombre: 'tipo', etiqueta: 'Tipo', tipo: 'select', valor: tipo, opciones: Object.entries(TIPO_DOC) }, campoArchivo, { nombre: 'folio', etiqueta: 'Folio del documento', opcional: 1 }],
       alEnviar: d => subir(d.archivo, { ...params, tipo: d.tipo, folio: d.folio || '' }),
     });
   },
@@ -594,7 +610,7 @@ Object.assign(acciones, {
       campos: [{ tipo: 'info', html: '<p>Se devuelve el documento para corregirlo. No cambia el inventario ni se pierde la versión original.</p>' },
         { nombre: 'tipo', etiqueta: 'Por qué se devuelve *', tipo: 'select', valor: 'faltante', opciones: [['faltante', 'Faltantes'], ['rechazo', 'Productos rechazados'], ['dano', 'Daños'], ['error_documento', 'Error en el documento']] },
         { nombre: 'motivo', etiqueta: 'Motivo *', tipo: 'area', req: 1 },
-        { nombre: 'notas', etiqueta: 'Notas sobre la entrega', tipo: 'area', opcional: 1 },
+        { nombre: 'notas', etiqueta: 'Notas para el proveedor (vienen de la revisión; edítalas antes de enviar)', tipo: 'area', opcional: 1, valor: notasRevision(r) },
         ...r.contenido.lineas.map(l => ({ nombre: `n${l.insumo_id}`, etiqueta: `Nota de ${l.insumo}`, opcional: 1 })),
         { nombre: 'archivo', etiqueta: 'Foto o captura', tipo: 'file', opcional: 1 }],
       alEnviar: async d => {
@@ -699,31 +715,33 @@ Object.assign(acciones, {
     const k = clave();
     formulario({
       titulo: `Producir ${r.nombre}`, enviar: 'Registrar producción', exito: 'Producción registrada. Existencias actualizadas.',
-      campos: [{ tipo: 'info', html: `<p>Alcanza para ${r.alcanza} porciones con las existencias actuales.</p>` }, { nombre: 'porciones', etiqueta: 'Porciones *', tipo: 'number', valor: r.porciones, req: 1 }],
+      campos: [{ tipo: 'info', html: r.produce ? `<p>Se descuentan sus ingredientes y se suman a la existencia de ${esc(r.produce)}. Con lo que hay alcanza para ${r.alcanza} ${esc(r.produce_unidad)}.</p>` : `<p>Alcanza para ${r.alcanza} porciones con las existencias actuales.</p>` },
+        { nombre: 'porciones', etiqueta: r.produce ? `Cantidad que vas a preparar (${esc(r.produce_unidad)}) *` : 'Porciones *', tipo: 'number', valor: r.porciones, req: 1 }],
       alEnviar: d => api(`/api/recetas/${id}/produccion`, { porciones: d.porciones, clave: k }),
     });
   },
   async guardarRendimientos() {
-    await api('/api/insumos/datos', { lineas: activos().map(i => ({ insumo: i.id, rendimiento: val(`ren.${i.id}.r`, i.rendimiento), costo: val(`ren.${i.id}.c`, i.costo) })) });
+    await api('/api/insumos/datos', { lineas: activos().map(i => ({ insumo: i.id, rendimiento: rendDe(val(`ren.${i.id}.m`, mermaDe(i.rendimiento))), costo: val(`ren.${i.id}.c`, i.costo) })) });
     limpiar('ren.');
-    avisar('Rendimientos y precios guardados');
+    avisar('Merma y precios guardados');
     await refrescar();
   },
   reintentar() {
     return arrancar();
   },
   async guardarReceta({ id }) {
-    const cuerpo = { nombre: $('#re-nombre').value, porciones: $('#re-porciones').value, notas: $('#re-notas').value, lineas: leerFilas('re') };
+    const cuerpo = { nombre: $('#re-nombre').value, porciones: $('#re-porciones').value, precio_venta: $('#re-precio').value, produce_insumo_id: $('#re-produce').value, notas: $('#re-notas').value, lineas: leerFilas('re') };
     const r = await (id ? api(`/api/recetas/${id}`, cuerpo, 'PUT') : api('/api/recetas', cuerpo));
     avisar('Receta guardada');
     await refrescar();
     location.hash = `#/receta/${id || r.id}`;
   },
-  provCorregida({ id }) {
+  provCorregida({ id, tipo = 'remision_corregida' }) {
+    const que = TIPO_DOC[tipo];
     formulario({
-      titulo: 'Subir remisión corregida', enviar: 'Subir', exito: 'Remisión corregida enviada a El Mesón',
-      campos: [campoArchivo],
-      alEnviar: d => subir(d.archivo, { remision: id, tipo: 'remision_corregida' }),
+      titulo: `Subir ${que.toLowerCase()}`, enviar: 'Subir', exito: `${que} enviada a El Mesón`,
+      campos: [campoArchivo, { nombre: 'folio', etiqueta: 'Folio del documento', opcional: 1 }],
+      alEnviar: d => subir(d.archivo, { remision: id, tipo, folio: d.folio || '' }),
     });
   },
 });

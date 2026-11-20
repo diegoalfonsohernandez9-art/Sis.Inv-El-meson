@@ -219,6 +219,18 @@ ALTER TABLE pedido_lineas ADD COLUMN presentacion TEXT;
 ALTER TABLE pedido_lineas ADD COLUMN factor REAL CHECK (factor IS NULL OR factor > 0);
 `;
 
+// Precio de venta de la receta (para el margen) y dirección a donde se envían folio y factura al proveedor.
+const MIGRACION_V5 = `
+ALTER TABLE recetas ADD COLUMN precio_venta REAL CHECK (precio_venta IS NULL OR precio_venta >= 0);
+ALTER TABLE proveedores ADD COLUMN direccion_envio TEXT;
+`;
+
+// Receta dentro de receta: una receta (la salsa) puede producir un insumo; los platillos lo usan como cualquier otro insumo.
+const MIGRACION_V6 = `
+ALTER TABLE recetas ADD COLUMN produce_insumo_id INTEGER REFERENCES insumos(id);
+CREATE UNIQUE INDEX recetas_produce_unico ON recetas(produce_insumo_id) WHERE produce_insumo_id IS NOT NULL;
+`;
+
 function migrarA(db, ruta, version, sql) {
   if (db.prepare('PRAGMA user_version').get().user_version >= version) return;
   if (ruta !== ':memory:') {
@@ -250,7 +262,9 @@ function abrirDb(ruta) {
     db.exec(MIGRACION_V2);
     db.exec(MIGRACION_V3);
     db.exec(MIGRACION_V4);
-    db.exec('PRAGMA user_version = 4');
+    db.exec(MIGRACION_V5);
+    db.exec(MIGRACION_V6);
+    db.exec('PRAGMA user_version = 6');
     db.exec('PRAGMA foreign_keys = ON');
     db.exec('BEGIN');
     const cat = db.prepare('INSERT INTO categorias (nombre, icono, foto) VALUES (?,?,?)');
@@ -264,6 +278,8 @@ function abrirDb(ruta) {
   migrarA(db, ruta, 2, MIGRACION_V2);
   migrarA(db, ruta, 3, MIGRACION_V3);
   migrarA(db, ruta, 4, MIGRACION_V4);
+  migrarA(db, ruta, 5, MIGRACION_V5);
+  migrarA(db, ruta, 6, MIGRACION_V6);
   return db;
 }
 

@@ -10,7 +10,7 @@ const operacion = require('./operacion');
 const SESION_MS = 7 * 864e5;
 const MAX_INTENTOS = 5;
 const BLOQUEO_MS = 5 * 60e3;
-const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.png': 'image/png', '.woff2': 'font/woff2' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg', '.woff2': 'font/woff2' };
 const CSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
 class Falla extends Error {
@@ -51,7 +51,8 @@ function pinNuevo(v) {
   return v;
 }
 
-function crearApp(rutaDb) {
+// sinPin: modo desarrollo, entra eligiendo el usuario sin PIN. Los PIN y los permisos por rol no cambian.
+function crearApp(rutaDb, { sinPin = false } = {}) {
   const db = abrirDb(rutaDb);
   // Los adjuntos viven fuera de public/ y solo salen por /api/documentos, con permisos.
   const dirArchivos = process.env.ARCHIVOS_DIR || (rutaDb === ':memory:' ? fs.mkdtempSync(path.join(os.tmpdir(), 'meson-archivos-')) : path.join(path.dirname(rutaDb), 'archivos'));
@@ -85,7 +86,7 @@ function crearApp(rutaDb) {
 
   function rendimientoDe(v) {
     const r = v === '' || v === undefined || v === null ? null : numero(v, 'Rendimiento');
-    if (r !== null && (r <= 0 || r > 100)) throw new Falla(400, 'El rendimiento debe estar entre 1 y 100 %');
+    if (r !== null && (r <= 0 || r > 100)) throw new Falla(400, 'La merma debe ser de 0 a 99 % (rendimiento de 1 a 100 %)');
     return r;
   }
   const precioDe = v => (v === '' || v === undefined || v === null ? null : numero(v, 'Precio'));
@@ -118,6 +119,7 @@ function crearApp(rutaDb) {
       nombre: texto(b.nombre, 'el nombre', 80), tipo, contacto, razon_social: opcional(b.razon_social, 'la razón social', 160), rfc,
       domicilio_fiscal: opcional(b.domicilio_fiscal, 'el domicilio fiscal', 250), cp, regimen_fiscal: opcional(b.regimen_fiscal, 'el régimen fiscal', 80),
       contacto_nombre: opcional(b.contacto_nombre, 'el nombre de contacto', 80), telefono, correo,
+      direccion_envio: opcional(b.direccion_envio, 'la dirección de envío', 250),
     };
   }
 
@@ -177,6 +179,7 @@ function crearApp(rutaDb) {
   const rutas = [
     ...op.rutas,
     ['GET', /^\/api\/usuarios$/, () => q('SELECT id, nombre, rol FROM usuarios WHERE activo = 1 ORDER BY nombre'), 'publico'],
+    ['GET', /^\/api\/config$/, () => ({ sin_pin: sinPin }), 'publico'],
     ['GET', /^\/api\/estado$/, (b, me) => estado(me), 'todos'],
 
     ['POST', /^\/api\/conteos$/, (b, me) => {
@@ -219,14 +222,14 @@ function crearApp(rutaDb) {
 
     ['POST', /^\/api\/proveedores$/, b => {
       const d = datosProveedor(b);
-      const { lastInsertRowid } = run('INSERT INTO proveedores (nombre, tipo, contacto, razon_social, rfc, domicilio_fiscal, cp, regimen_fiscal, contacto_nombre, telefono, correo) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-        d.nombre, d.tipo, d.contacto, d.razon_social, d.rfc, d.domicilio_fiscal, d.cp, d.regimen_fiscal, d.contacto_nombre, d.telefono, d.correo);
+      const { lastInsertRowid } = run('INSERT INTO proveedores (nombre, tipo, contacto, razon_social, rfc, domicilio_fiscal, cp, regimen_fiscal, contacto_nombre, telefono, correo, direccion_envio) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+        d.nombre, d.tipo, d.contacto, d.razon_social, d.rfc, d.domicilio_fiscal, d.cp, d.regimen_fiscal, d.contacto_nombre, d.telefono, d.correo, d.direccion_envio);
       return { id: Number(lastInsertRowid) };
     }, 'admin'],
     ['PUT', /^\/api\/proveedores\/(\d+)$/, (b, me, [id]) => {
       const d = datosProveedor(b);
-      if (!run('UPDATE proveedores SET nombre=?, tipo=?, contacto=?, razon_social=?, rfc=?, domicilio_fiscal=?, cp=?, regimen_fiscal=?, contacto_nombre=?, telefono=?, correo=? WHERE id=?',
-        d.nombre, d.tipo, d.contacto, d.razon_social, d.rfc, d.domicilio_fiscal, d.cp, d.regimen_fiscal, d.contacto_nombre, d.telefono, d.correo, Number(id)).changes) throw new Falla(404, 'Proveedor no encontrado');
+      if (!run('UPDATE proveedores SET nombre=?, tipo=?, contacto=?, razon_social=?, rfc=?, domicilio_fiscal=?, cp=?, regimen_fiscal=?, contacto_nombre=?, telefono=?, correo=?, direccion_envio=? WHERE id=?',
+        d.nombre, d.tipo, d.contacto, d.razon_social, d.rfc, d.domicilio_fiscal, d.cp, d.regimen_fiscal, d.contacto_nombre, d.telefono, d.correo, d.direccion_envio, Number(id)).changes) throw new Falla(404, 'Proveedor no encontrado');
     }, 'admin'],
 
     ['POST', /^\/api\/usuarios$/, b => {
@@ -323,10 +326,10 @@ function crearApp(rutaDb) {
 
   function login(b) {
     const u = uno('SELECT * FROM usuarios WHERE id = ? AND activo = 1', Number(b.usuario_id));
-    if (!u || typeof b.pin !== 'string') throw new Falla(401, 'Usuario o PIN incorrecto');
+    if (!u || (!sinPin && typeof b.pin !== 'string')) throw new Falla(401, 'Usuario o PIN incorrecto');
     const t = intentos.get(u.id);
     if (t && t.hasta > Date.now()) throw new Falla(429, 'Demasiados intentos. Espera 5 minutos.');
-    if (!pinValido(b.pin, u.pin_hash)) {
+    if (!sinPin && !pinValido(b.pin, u.pin_hash)) {
       const fallos = (t && t.hasta ? 0 : t?.fallos || 0) + 1;
       intentos.set(u.id, { fallos, hasta: fallos >= MAX_INTENTOS ? Date.now() + BLOQUEO_MS : 0 });
       throw new Falla(401, 'Usuario o PIN incorrecto');
@@ -463,5 +466,14 @@ module.exports = { crearApp };
 
 if (require.main === module) {
   const host = process.env.HOST || '127.0.0.1', port = Number(process.env.PORT) || 3000;
-  crearApp(process.env.DB_PATH || path.join(__dirname, 'meson.db')).listen(port, host, () => console.log(`El Mesón listo en http://${host}:${port}`));
+  const sinPin = process.env.SIN_PIN === '1';
+  // Sin PIN solo en esta computadora: abierto a la red, cualquiera en el wifi entraría como Administrador.
+  if (sinPin && !['127.0.0.1', 'localhost', '::1'].includes(host)) {
+    console.error('SIN_PIN=1 solo se permite con HOST=127.0.0.1. Quita SIN_PIN para abrir el sistema a la red.');
+    process.exit(1);
+  }
+  crearApp(process.env.DB_PATH || path.join(__dirname, 'meson.db'), { sinPin }).listen(port, host, () => {
+    console.log(`El Mesón listo en http://${host}:${port}`);
+    if (sinPin) console.log('MODO DESARROLLO: se entra sin PIN. Quita SIN_PIN antes de usarlo en el restaurante.');
+  });
 }

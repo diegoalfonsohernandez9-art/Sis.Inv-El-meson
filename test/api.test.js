@@ -174,7 +174,9 @@ test('la migración v0 → v1 conserva datos y deja respaldo', () => {
   assert.equal(u.activo, 0);
   assert.equal(db.prepare('SELECT avance FROM pedidos').get().avance, 'por_confirmar');
   assert.ok(fs.existsSync(`${ruta}.respaldo-v1`));
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 4);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 6);
+  assert.ok(fs.existsSync(`${ruta}.respaldo-v4`));
+  assert.ok(fs.existsSync(`${ruta}.respaldo-v5`));
   assert.ok(fs.existsSync(`${ruta}.respaldo-v2`));
   assert.ok(fs.existsSync(`${ruta}.respaldo-v3`));
   const pl = db.prepare('SELECT aceptado, recibido FROM pedido_lineas').get();
@@ -210,4 +212,25 @@ test('una presentación no se borra ni cambia su contenido en la base', () => {
   assert.throws(() => db.prepare('DELETE FROM presentaciones WHERE id = ?').run(p.id), /no se borra/);
   assert.throws(() => db.prepare('UPDATE presentaciones SET contenido = 99 WHERE id = ?').run(p.id), /no se modifica/);
   db.prepare('UPDATE presentaciones SET activo = 0 WHERE id = ?').run(p.id);
+});
+
+test('modo sin PIN: entra eligiendo el usuario, los permisos por rol siguen y por defecto se pide PIN', async () => {
+  const dev = crearApp(':memory:', { sinPin: true });
+  await new Promise(r => dev.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${dev.address().port}`;
+  try {
+    assert.deepEqual(await (await fetch(url + '/api/config')).json(), { sin_pin: true });
+    const us = await (await fetch(url + '/api/usuarios')).json();
+    const entrar = async nombre => (await fetch(url + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usuario_id: us.find(u => u.nombre === nombre).id }) }));
+    const r = await entrar('Juan Pérez');
+    assert.equal(r.status, 200);
+    const cookie = r.headers.get('set-cookie').split(';')[0];
+    const nuevo = await fetch(url + '/api/insumos', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ nombre: 'X', categoria_id: 1, unidad: 'kg', stock: 0, min: 0, max: 1 }) });
+    assert.equal(nuevo.status, 403, 'Cocina sigue sin poder hacer lo de Administración');
+  } finally { dev.close(); }
+  const normal = await (await fetch(base + '/api/config')).json();
+  assert.equal(normal.sin_pin, false);
+  const us = await (await fetch(base + '/api/usuarios')).json();
+  const sinPin = await fetch(base + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usuario_id: us[0].id }) });
+  assert.equal(sinPin.status, 401, 'sin el modo, el PIN es obligatorio');
 });

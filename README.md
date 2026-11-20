@@ -41,6 +41,7 @@ Al actualizar desde una versión anterior, la base se migra sola al arrancar y d
 | `LUGAR_ENTREGA` | Lugar de entrega inicial en remisiones | `El Mesón` |
 | `SIN_DEMO` | Sin datos de ejemplo al crear la base | no definida |
 | `PIN_INICIAL` | Mismo PIN para los usuarios sembrados (solo pruebas) | PIN aleatorio |
+| `SIN_PIN` | `1` = modo desarrollo: se entra eligiendo el usuario, sin PIN. Solo con `HOST=127.0.0.1`; los permisos por rol siguen. **Quitarlo antes de usarlo en el restaurante.** `iniciar.bat` lo activa. | Apagado |
 
 ## Reglas del sistema
 
@@ -49,7 +50,9 @@ Al actualizar desde una versión anterior, la base se migra sola al arrancar y d
 - **Autorizar una solicitud:** solo administración puede hacerlo, y se crea un pedido por proveedor.
 - **Recepción:** un pedido admite varias entregas. Al inventario entra solo lo aceptado; lo pendiente se recibe después o se cierra con justificación.
 - **Faltante, rechazo y pendiente:** faltante es lo que no llegó; rechazado es lo que llegó y no se aceptó; pendiente es lo pedido que aún no se acepta, así que lo rechazado se puede volver a entregar.
-- **Rendimiento y merma:** si la línea de la receta define merma, se usa esa; si no, el rendimiento del insumo. Nunca las dos. La merma adicional se registra aparte.
+- **Merma:** el insumo se captura con su merma (pollo: 40 %) y se guarda como rendimiento (60 %). Si la línea de la receta define merma, se usa esa y no la del insumo. Nunca las dos. La merma adicional se registra aparte.
+- **Margen:** precio de venta por porción menos el costo por porción. Sin precio de venta o sin precio de algún insumo, no se calcula.
+- **Sub-recetas:** una receta (la salsa) puede producir un insumo. Producirla descuenta sus ingredientes y suma lo que rinde; los platillos la usan como ingrediente y muestran para cuántas porciones sale una tanda.
 - **Remisión:** devolverla con observaciones no toca el inventario. Devolver mercancía sí descuenta, solo hasta lo aceptado. Cambiar una remisión emitida crea otra versión, conserva la anterior y pide firmas otra vez.
 
 ## Integraciones pendientes
@@ -57,3 +60,18 @@ Al actualizar desde una versión anterior, la base se migra sola al arrancar y d
 - **Validación fiscal (SAT/PAC):** no conectada. El checklist es una revisión interna.
 - **Envío por correo o WhatsApp:** no conectado. Se abre la aplicación del usuario y queda registrado como compartido a mano, sin confirmación. La publicación en el portal del proveedor sí es real.
 - **Control de asistencia:** no existe en este sistema.
+
+## Procesos en Java
+`procesos-java/` genera reportes en CSV (se abren en Excel) con el sistema encendido. Requiere Java 21 (Eclipse Temurin).
+- **Ejecutar:** doble clic en `procesos-java/ejecutar.bat`. Pide usuario y PIN de **Administrador**, y el PIN no se guarda.
+- **Genera:** en `procesos-java/reportes/<fecha>/` → `existencias.csv` (estado OK, Bajo o Crítico), `reabastecimiento.csv` (qué pedir, a qué proveedor y en cuántas cajas), `recetas.csv` (costo, margen, alcanza para) y `merma.csv` (últimos 30 días).
+- **Solo lee:** entra por la API con los mismos permisos que las pantallas; no crea pedidos ni mueve inventario. Los reportes tienen datos del negocio y no van a git.
+- **Verificar:** `node procesos-java/verificar.js` usa una base de prueba con datos ficticios y compara las cifras con las de la pantalla.
+
+## Respaldo automático
+- **Cada día a las 11:30 p.m.** la tarea de Windows "El Meson - respaldo diario" corre `respaldar.bat`. Si la laptop estaba apagada a esa hora, corre al encenderla.
+- **Guarda** `respaldos/meson-AAAA-MM-DD.db` (uno por día) y conserva los **últimos 30**. La carpeta está dentro de OneDrive, así que también sube a la nube. Los respaldos con otro nombre (manuales) nunca se borran.
+- **Es seguro con el sistema abierto:** usa `VACUUM INTO` y revisa la integridad de cada copia antes de guardarla. El registro queda en `respaldos/respaldos.log`.
+- **Respaldo manual:** doble clic en `respaldar.bat`.
+- **Restaurar:** apaga el sistema, renombra `meson.db` (por ejemplo a `meson.db.dañada`), copia el respaldo elegido como `meson.db` y vuelve a encender.
+- **Quitar la tarea:** `schtasks /delete /tn "El Meson - respaldo diario" /f`.

@@ -55,6 +55,7 @@ let fallas = 0;
   await cdp('Page.navigate', { url: 'http://127.0.0.1:3116/' });
   await dormir(800);
   await foto('00-acceso');
+  await ancho(390); await dormir(150); await foto('00-acceso-movil'); await ancho(1366);
   await entrar('Leo');
 
   // Datos: pedido parcial con remisión, y una receta
@@ -67,10 +68,15 @@ let fallas = 0;
   await post(`/api/remisiones/${rem}/emitir`, {});
   await post(`/api/remisiones/${rem}/envio`, { canal: 'portal' });
   const { id: receta } = await post('/api/recetas', { nombre: 'Pollo asado', porciones: 4, lineas: [{ insumo: pollo.id, neta: 1, merma: 20 }, { insumo: queso.id, neta: 0.2 }] });
+  await post('/api/insumos', { nombre: 'Salsa verde', categoria_id: 1, unidad: 'L', stock: 0, min: 1, max: 4 });
+  const salsaIns = (await estado()).insumos.find(i => i.nombre === 'Salsa verde').id;
+  const { id: salsa } = await post('/api/recetas', { nombre: 'Salsa verde', porciones: 2, produce_insumo_id: salsaIns, lineas: [{ insumo: queso.id, neta: 0.5 }] });
+  await post('/api/recetas', { nombre: 'Enchiladas verdes', porciones: 4, precio_venta: 95, lineas: [{ insumo: salsaIns, neta: 0.4 }, { insumo: pollo.id, neta: 0.6 }] });
+  await post(`/api/recetas/${salsa}/produccion`, { porciones: 2 });
   const { id: abierto } = await post('/api/pedidos', { proveedor_id: 1, fecha_entrega: '2030-01-02', lineas: [{ insumo: pollo.id, cantidad: 8 }, { insumo: queso.id, cantidad: 2 }] });
 
   const roles = [
-    ['Leo', 'ui-admin', ['#/inicio', '#/inventario', '#/insumos', `#/insumo/${pollo.id}`, '#/rendimientos', '#/conteo/1', '#/pedidos', '#/nuevo-pedido', `#/pedido/${ped}`, `#/recepcion/${abierto}`, `#/expediente/${rec}`, `#/remision/${rem}`, '#/pendientes', '#/proveedores', '#/proveedor/1', '#/recetas', `#/receta/${receta}`, '#/receta-editar', '#/reportes', '#/perfil']],
+    ['Leo', 'ui-admin', ['#/inicio', '#/inventario', '#/insumos', `#/insumo/${pollo.id}`, '#/rendimientos', '#/conteo/1', '#/pedidos', '#/nuevo-pedido', `#/pedido/${ped}`, `#/recepcion/${abierto}`, `#/expediente/${rec}`, `#/remision/${rem}`, '#/pendientes', '#/proveedores', '#/proveedor/1', '#/recetas', `#/receta/${receta}`, `#/receta/${salsa}`, `#/receta-editar/${salsa}`, '#/receta-editar', '#/reportes', '#/perfil']],
     ['Juan Pérez', 'ui-cocina', ['#/inicio', '#/conteo/1', '#/pedidos', '#/recibir', '#/recetas', `#/receta/${receta}`, '#/perfil']],
     ['Carlos Méndez', 'ui-auxiliar', ['#/pendientes', '#/recibir', `#/recepcion/${abierto}`, `#/expediente/${rec}`, `#/remision/${rem}`, '#/proveedores', '#/perfil']],
     ['Distribuidora Central', 'ui-proveedor', ['#/pedidos', `#/pedido/${ped}`, '#/remisiones', `#/remision/${rem}`, '#/historial', '#/perfil']],
@@ -133,6 +139,24 @@ let fallas = 0;
   await dormir(200);
   const av = await ev(`(()=>{const c=[...document.querySelectorAll('#app input[type=number]')]; c[0].focus(); c[0].dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true})); return document.activeElement===c[1]})()`);
   check('Enter pasa a la siguiente cantidad', av);
+
+  // Captura rápida: escaneo (el lector teclea el código + Enter), escaneo repetido suma 1, nombre parcial y cajas
+  await ev(`location.hash='#/inventario'`); await dormir(200);
+  const escanea = t => ev(`(()=>{const b=document.querySelector('#cr-buscar'); b.value=${JSON.stringify(t)}; b.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));})()`);
+  await escanea('7501000000158'); await escanea('7501000000158'); await dormir(100);
+  check('captura: escanear dos veces el Cloro cuenta 2', await ev(`document.querySelector('#cr-cant')?.value==='2' && document.activeElement.id==='cr-buscar'`));
+  await ev(`document.querySelector('[data-act="guardarRapida"]').click()`); await dormir(500);
+  check('captura: el conteo del Cloro queda en 2 L', (await estado()).insumos.find(i => i.nombre === 'Cloro').stock === 2);
+  await escanea('pechu'); await dormir(100);
+  check('captura: un nombre parcial elige Pollo y pasa a la cantidad', await ev(`document.activeElement.id==='cr-cant' && document.querySelector('#captura b').textContent.startsWith('Pollo')`));
+  await ev(`(()=>{const c=document.querySelector('#cr-cant'); c.value='3'; const f=document.querySelector('#cr-factor'); f.value=[...f.options].find(o=>o.text.startsWith('Caja')).value; c.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));})()`); await dormir(500);
+  check('captura: 3 cajas de 10 kg guardan 30 kg', (await estado()).insumos.find(i => i.nombre === 'Pollo (pechuga)').stock === 30);
+  await escanea('no-existe-123'); await dormir(100);
+  check('captura: un código desconocido avisa y no elige nada', await ev(`!document.querySelector('#cr-cant') && document.querySelector('#aviso').textContent.includes('Ningún insumo')`));
+  await foto('ui-admin-captura');
+  await entrar('Juan Pérez'); await ev(`location.hash='#/conteo/1'`); await dormir(200);
+  check('captura: Cocina la tiene en Conteo', await ev(`!!document.querySelector('#cr-buscar')`));
+  await entrar('Leo');
 
   // Rutas de otro rol no se abren
   await entrar('Juan Pérez');

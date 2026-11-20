@@ -5,7 +5,7 @@ const crypto = require('node:crypto');
 const { pdfRemision } = require('./pdf');
 
 const CHECKLIST = ['proveedor', 'pedido', 'productos', 'cantidades', 'calidad', 'precios', 'importes', 'documento', 'datos_fiscales', 'folio', 'adjuntos'];
-const TIPOS_DOC = ['factura', 'xml', 'pdf', 'nota_entrega', 'foto', 'captura', 'evidencia', 'comprobante_devolucion', 'remision_corregida'];
+const TIPOS_DOC = ['factura', 'xml', 'pdf', 'nota_entrega', 'foto', 'captura', 'evidencia', 'comprobante_devolucion', 'remision_corregida', 'factura_corregida'];
 const TIPOS_OBS = { faltante: 'Faltantes', rechazo: 'Productos rechazados', dano: 'Daños', error_documento: 'Error en el documento' };
 const MAX_ARCHIVO = 10 * 1024 * 1024;
 
@@ -242,7 +242,19 @@ module.exports = function operacion(ctx) {
     return es.some(e => e.resultado === 'error') ? 'error' : 'sin_enviar';
   };
 
-  function datosReceta(b) {
+  // Si la receta produce un insumo, ninguno de sus ingredientes (ni los de sus sub-recetas) puede ser ese mismo insumo.
+  function ciclo(insumos, producido, editando, vistos = new Set()) {
+    for (const id of insumos) {
+      if (id === producido) return true;
+      const sub = uno('SELECT id FROM recetas WHERE produce_insumo_id = ? AND id IS NOT ?', id, editando);
+      if (!sub || vistos.has(sub.id)) continue;
+      vistos.add(sub.id);
+      if (ciclo(q('SELECT insumo_id FROM receta_lineas WHERE receta_id = ?', sub.id).map(l => l.insumo_id), producido, editando, vistos)) return true;
+    }
+    return false;
+  }
+
+  function datosReceta(b, editando = null) {
     const porciones = numero(b.porciones, 'Porciones');
     if (!porciones) throw new Falla(400, 'Las porciones deben ser mayores a cero');
     const ls = lineas(b).map(l => {
@@ -252,18 +264,49 @@ module.exports = function operacion(ctx) {
       if (merma !== null && merma >= 100) throw new Falla(400, `${i.nombre}: la merma debe ser menor a 100 %`);
       return [i.id, neta, merma];
     });
-    return { nombre: texto(b.nombre, 'el nombre', 80), porciones, notas: opcional(b.notas, 'las notas', 1000), ls };
+    const precio_venta = b.precio_venta === '' || b.precio_venta === null || b.precio_venta === undefined ? null : numero(b.precio_venta, 'Precio de venta');
+    const produce = b.produce_insumo_id ? insumo(b.produce_insumo_id) : null;
+    if (produce) {
+      const otra = uno('SELECT nombre FROM recetas WHERE produce_insumo_id = ? AND id IS NOT ?', produce.id, editando);
+      if (otra) throw new Falla(409, `${produce.nombre} ya lo produce la receta ${otra.nombre}`);
+      if (ciclo(ls.map(l => l[0]), produce.id, editando)) throw new Falla(400, `La receta no puede usar ${produce.nombre} como ingrediente: es lo que produce`);
+    }
+    return { nombre: texto(b.nombre, 'el nombre', 80), porciones, precio_venta, notas: opcional(b.notas, 'las notas', 1000), produce_insumo_id: produce?.id ?? null, ls };
+  }
+
+  // Costo por unidad de un insumo: su precio capturado o, si lo produce una receta sin precio propio, el costo de esa receta por unidad.
+  function costoInsumo(id, vistos = new Set()) {
+    const i = uno('SELECT costo FROM insumos WHERE id = ?', id);
+    if (i.costo !== null) return i.costo;
+    const r = uno('SELECT * FROM recetas WHERE produce_insumo_id = ?', id);
+    if (!r || vistos.has(r.id)) return null;
+    vistos.add(r.id);
+    let total = 0;
+    for (const l of q('SELECT rl.insumo_id, rl.neta, rl.merma, i.rendimiento FROM receta_lineas rl JOIN insumos i ON i.id = rl.insumo_id WHERE rl.receta_id = ?', r.id)) {
+      const c = costoInsumo(l.insumo_id, vistos);
+      if (c === null) return null;
+      total += calcularLinea(l.neta, l.merma, l.rendimiento).bruta * c;
+    }
+    return total / r.porciones;
   }
 
   function recetas() {
-    return q('SELECT * FROM recetas ORDER BY nombre').map(r => {
+    const todas = q(`SELECT r.*, i.nombre produce, i.unidad produce_unidad FROM recetas r LEFT JOIN insumos i ON i.id = r.produce_insumo_id ORDER BY r.nombre`).map(r => {
       const ls = q(`SELECT rl.insumo_id, rl.neta, rl.merma, i.nombre, i.unidad, i.stock, i.rendimiento, i.costo FROM receta_lineas rl
-        JOIN insumos i ON i.id = rl.insumo_id WHERE rl.receta_id = ? ORDER BY i.nombre`, r.id).map(l => ({ ...l, ...calcularLinea(l.neta, l.merma, l.rendimiento) }));
+        JOIN insumos i ON i.id = rl.insumo_id WHERE rl.receta_id = ? ORDER BY i.nombre`, r.id).map(l => ({ ...l, costo: costoInsumo(l.insumo_id), ...calcularLinea(l.neta, l.merma, l.rendimiento) }));
       const sinPrecio = ls.filter(l => l.costo === null).map(l => l.nombre);
       const costo = sinPrecio.length ? null : r3(ls.reduce((t, l) => t + l.bruta * l.costo, 0));
       const alcanza = ls.length ? Math.floor(Math.min(...ls.map(l => l.stock / (l.bruta / r.porciones)))) : 0;
-      return { ...r, lineas: ls, costo, costo_porcion: costo === null ? null : r3(costo / r.porciones), sin_precio: sinPrecio, alcanza };
+      const costo_porcion = costo === null ? null : r3(costo / r.porciones);
+      const margen = costo_porcion === null || r.precio_venta === null ? null : r3(r.precio_venta - costo_porcion);
+      const margen_pct = margen === null || !r.precio_venta ? null : Math.round(margen / r.precio_venta * 1000) / 10;
+      return { ...r, lineas: ls, costo, costo_porcion, margen, margen_pct, sin_precio: sinPrecio, alcanza };
     });
+    // Para cuántos platillos sale una tanda de la sub-receta (la salsa): lo que rinde entre lo que usa cada platillo por porción.
+    return todas.map(r => ({ ...r, usos: !r.produce_insumo_id ? [] : todas.flatMap(o => o.lineas.filter(l => l.insumo_id === r.produce_insumo_id).map(l => {
+      const porPorcion = l.bruta / o.porciones;
+      return { receta_id: o.id, receta: o.nombre, por_porcion: r3(porPorcion), por_tanda: Math.floor(r.porciones / porPorcion) };
+    })) }));
   }
 
   function descargaDoc(d) {
@@ -283,7 +326,7 @@ module.exports = function operacion(ctx) {
       const r = uno('SELECT * FROM remisiones WHERE id = ?', remision);
       if (!r) throw new Falla(404, 'Remisión no encontrada');
       pedido = r.pedido_id; recepcion = r.recepcion_id; proveedor = r.proveedor_id;
-      if (me.rol === 'proveedor' && (r.proveedor_id !== me.proveedor_id || !r.compartida || tipo !== 'remision_corregida')) throw new Falla(403, 'Sin acceso');
+      if (me.rol === 'proveedor' && (r.proveedor_id !== me.proveedor_id || !r.compartida || r.estado !== 'devuelta' || !['remision_corregida', 'factura_corregida'].includes(tipo))) throw new Falla(403, 'Sin acceso');
     } else if (me.rol === 'proveedor') throw new Falla(403, 'Sin acceso');
     if (recepcion && !pedido) {
       const r = uno('SELECT pedido_id FROM recepciones WHERE id = ?', recepcion);
@@ -304,7 +347,7 @@ module.exports = function operacion(ctx) {
       const { lastInsertRowid } = run(`INSERT INTO documentos (tipo, nombre, mime, tam, archivo, folio, proveedor_id, pedido_id, recepcion_id, remision_id, devolucion_id, insumo_id, usuario, creado)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, tipo, nombre, real[0], cuerpo.length, archivo, (params.get('folio') || '').slice(0, 40) || null, proveedor, pedido, recepcion, remision, num('devolucion'), num('insumo'), me.nombre, ahora());
       if (remision) historial(remision, 'documento', `${me.rol === 'proveedor' ? 'El proveedor adjuntó' : 'Se adjuntó'} ${nombre}`, me);
-      if (tipo === 'remision_corregida') evento('alerta', 'Remisión corregida recibida', `Adjuntó ${me.nombre}`, `#/remision/${remision}`);
+      if (tipo === 'remision_corregida' || tipo === 'factura_corregida') evento('alerta', `${tipo === 'factura_corregida' ? 'Factura' : 'Remisión'} corregida recibida`, `Adjuntó ${me.nombre}`, `#/remision/${remision}`);
       return { id: Number(lastInsertRowid) };
     } catch (e) {
       fs.rmSync(path.join(dirArchivos, archivo), { force: true });
@@ -575,13 +618,13 @@ module.exports = function operacion(ctx) {
 
     ['POST', /^\/api\/recetas$/, b => {
       const d = datosReceta(b);
-      const { lastInsertRowid } = run('INSERT INTO recetas (nombre, porciones, notas) VALUES (?,?,?)', d.nombre, d.porciones, d.notas);
+      const { lastInsertRowid } = run('INSERT INTO recetas (nombre, porciones, precio_venta, notas, produce_insumo_id) VALUES (?,?,?,?,?)', d.nombre, d.porciones, d.precio_venta, d.notas, d.produce_insumo_id);
       d.ls.forEach(l => run('INSERT INTO receta_lineas VALUES (?,?,?,?)', lastInsertRowid, ...l));
       return { id: Number(lastInsertRowid) };
     }, 'admin'],
     ['PUT', /^\/api\/recetas\/(\d+)$/, (b, me, [id]) => {
-      const d = datosReceta(b);
-      if (!run('UPDATE recetas SET nombre=?, porciones=?, notas=? WHERE id=?', d.nombre, d.porciones, d.notas, Number(id)).changes) throw new Falla(404, 'Receta no encontrada');
+      const d = datosReceta(b, Number(id));
+      if (!run('UPDATE recetas SET nombre=?, porciones=?, precio_venta=?, notas=?, produce_insumo_id=? WHERE id=?', d.nombre, d.porciones, d.precio_venta, d.notas, d.produce_insumo_id, Number(id)).changes) throw new Falla(404, 'Receta no encontrada');
       run('DELETE FROM receta_lineas WHERE receta_id = ?', Number(id));
       d.ls.forEach(l => run('INSERT INTO receta_lineas VALUES (?,?,?,?)', Number(id), ...l));
     }, 'admin'],
@@ -607,8 +650,14 @@ module.exports = function operacion(ctx) {
       const { lastInsertRowid } = run('INSERT INTO producciones (receta_id, porciones, usuario_id, creado, clave) VALUES (?,?,?,?,?)', r.id, porciones, me.id, ahora(), k);
       const prod = Number(lastInsertRowid);
       for (const c of calc) {
-        run('INSERT INTO produccion_lineas (produccion_id, insumo_id, neta, bruta, merma_prevista, fuente, costo) VALUES (?,?,?,?,?,?,?)', prod, c.l.iid, c.neta, c.bruta, c.merma_prevista, c.fuente, c.l.costo === null ? null : r3(c.bruta * c.l.costo));
+        const cu = costoInsumo(c.l.iid);
+        run('INSERT INTO produccion_lineas (produccion_id, insumo_id, neta, bruta, merma_prevista, fuente, costo) VALUES (?,?,?,?,?,?,?)', prod, c.l.iid, c.neta, c.bruta, c.merma_prevista, c.fuente, cu === null ? null : r3(c.bruta * cu));
         moverStock({ id: c.l.iid, nombre: c.l.nombre, stock: c.l.stock, unidad: c.l.unidad, min: c.l.min }, c.l.stock - c.bruta, 'produccion', me, { ref: `produccion:${prod}`, nota: `${r.nombre}, ${porciones} porciones` });
+      }
+      // La sub-receta deja en existencia lo que rinde (2 L de salsa); los platillos la descuentan al producirse.
+      if (r.produce_insumo_id) {
+        const p = insumo(r.produce_insumo_id);
+        moverStock(p, p.stock + porciones, 'produccion_entrada', me, { ref: `produccion:${prod}`, nota: `${r.nombre}: rindió ${porciones} ${p.unidad}` });
       }
       return { id: prod };
     }],
